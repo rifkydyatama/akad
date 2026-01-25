@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
-import puppeteer from 'puppeteer-extra';
+// Note: do NOT import `puppeteer-extra` at module top-level. We'll dynamically
+// import either `puppeteer-core` (production) or `puppeteer-extra` (dev) at runtime
+// to avoid bundlers removing submodules like `puppeteer-extra-plugin-stealth/evasions`.
 
 import { cleanupSessions, createSession, dedupeInflight, getSession, updateSession } from './_session';
 import type { SiakadSession } from './_session';
@@ -136,28 +138,75 @@ export async function POST(request: Request) {
             ? process.env.PUPPETEER_HEADLESS !== "false"
             : process.env.NODE_ENV === "production";
 
-        // Dynamically import stealth plugin at runtime to avoid build-time bundling issues on Vercel
-        try {
-            const stealthMod = await import('puppeteer-extra-plugin-stealth');
-            const StealthPlugin = (stealthMod && (stealthMod.default || stealthMod));
-            if (typeof StealthPlugin === 'function') {
-                puppeteer.use(StealthPlugin());
-            }
-        } catch (err) {
-            // If it fails, continue without stealth but keep a warning for debugging
-            console.warn('Failed to load puppeteer-extra-plugin-stealth:', err);
-        }
+        // Conditional browser setup:
+        // - Production (Vercel): use `puppeteer-core` + `@sparticuz/chromium-min` (smaller, server-friendly)
+        // - Development (local): use `puppeteer-extra` + stealth plugin for easier testing
+        const isProd = process.env.VERCEL === '1' || process.env.NODE_ENV === 'production';
 
-                browser = await puppeteer.launch({
-            headless, // Production default: headless
-      defaultViewport: null,
-            args: [
-                '--start-maximized',
-                '--no-sandbox',
-                '--disable-setuid-sandbox',
-                '--disable-blink-features=AutomationControlled',
-            ],
-    });
+        if (isProd) {
+            // Production serverless environment: use puppeteer-core + sparticuz chromium
+            try {
+                const puppeteerCore = await import('puppeteer-core');
+                const chromium = await import('@sparticuz/chromium-min');
+
+                // Resolve executablePath. Try common export shapes defensively.
+                let executablePath: string | undefined;
+                try {
+                    if (chromium && typeof chromium.executablePath === 'function') {
+                        executablePath = await chromium.executablePath();
+                    } else if (chromium && chromium.executablePath) {
+                        executablePath = chromium.executablePath;
+                    } else if (chromium && chromium.path) {
+                        executablePath = chromium.path;
+                    }
+                } catch (e) {
+                    console.warn('Failed to resolve chromium executablePath:', e);
+                }
+
+                const args = (chromium && (chromium.args || chromium.defaultArgs)) || [
+                    '--no-sandbox',
+                    '--disable-setuid-sandbox',
+                    '--disable-dev-shm-usage',
+                    '--disable-accelerated-2d-canvas',
+                    '--no-zygote',
+                    '--single-process',
+                ];
+
+                browser = await puppeteerCore.launch({
+                    executablePath: executablePath || undefined,
+                    headless,
+                    args,
+                    defaultViewport: null,
+                });
+            } catch (err) {
+                console.error('Failed to launch puppeteer-core on production:', err);
+                throw err;
+            }
+        } else {
+            // Development/local: keep using puppeteer-extra + stealth for full feature parity while testing
+            try {
+                const puppeteerExtra = await import('puppeteer-extra');
+                const stealthMod = await import('puppeteer-extra-plugin-stealth');
+                const StealthPlugin = (stealthMod && (stealthMod.default || stealthMod));
+                if (typeof StealthPlugin === 'function') {
+                    puppeteerExtra.use(StealthPlugin());
+                }
+
+                browser = await puppeteerExtra.launch({
+                    headless,
+                    defaultViewport: null,
+                    args: [
+                        '--start-maximized',
+                        '--no-sandbox',
+                        '--disable-setuid-sandbox',
+                        '--disable-blink-features=AutomationControlled',
+                    ],
+                });
+            } catch (err) {
+                console.error('Failed to launch puppeteer-extra in dev:', err);
+                throw err;
+            }
+        }
 
     const page = await browser.newPage();
 

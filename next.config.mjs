@@ -2,8 +2,9 @@ import withPWA from 'next-pwa';
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // Ini adalah kunci agar robot Puppeteer tidak error saat dijalankan Next.js
-  serverExternalPackages: ['puppeteer-extra', 'puppeteer-extra-plugin-stealth', 'puppeteer'],
+  // Paket native/large yang harus dibiarkan di luar bundler Next.js (server-only)
+  // Tambahkan `puppeteer-core` dan `@sparticuz/chromium-min` untuk runtime Vercel
+  serverExternalPackages: ['puppeteer-core', '@sparticuz/chromium-min'],
 
   images: {
     remotePatterns: [
