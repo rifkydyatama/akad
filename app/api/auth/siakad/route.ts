@@ -3,33 +3,28 @@ import { cookies } from 'next/headers';
 import { cleanupSessions, createSession, dedupeInflight, getSession, updateSession } from './_session';
 import type { SiakadSession } from './_session';
 
-// --- IMPORT DYNAMIC (BIAR VERCEL GAK ERROR BUILD) ---
 import chromium from '@sparticuz/chromium';
 import puppeteerCore from 'puppeteer-core';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-export const maxDuration = 60; // Wajib 60 detik buat Vercel Hobby
+export const maxDuration = 60; // Batas maksimal Vercel Hobby
 
-// --- TYPE DEFINITIONS ---
-type Profile = {
-    name: string; prodi: string; fakultas: string; dosenPa: string; status: string; jalur: string; foto: string | null;
-};
+// --- STRUKTUR DATA UNTUK TYPE SAFETY ---
+type Profile = { name: string; prodi: string; fakultas: string; dosenPa: string; status: string; jalur: string; foto: string | null; };
 type AllData = {
     profile: Profile;
-    keuangan: { master: any; riwayat: any[]; totals: any };
-    registrasi: any[]; khs: any; dhs: any; jadwal: any[]; dhe: any[];
+    keuangan: { riwayat: any[]; totals: { ukt: number; count: number } };
+    registrasi: any[];
+    khs: { ips: string; semester: string };
+    dhs: { ipk: string; totalSks: string };
+    jadwal: any[];
+    dhe: any[];
 };
 
 export async function POST(request: Request) {
-    let nim = "";
-    let password = "";
-    let body: Record<string, unknown> = {};
-
-    try {
-        const parsed: unknown = await request.json();
-        if (parsed && typeof parsed === 'object') body = parsed as Record<string, unknown>;
-    } catch { body = {}; }
+    let nim = ""; let password = ""; let body: any = {};
+    try { body = await request.json(); } catch { body = {}; }
 
     nim = String(body.nim || "").trim();
     password = String(body.password || "");
@@ -37,311 +32,168 @@ export async function POST(request: Request) {
     const cookieStore = await cookies();
     const sessionToken = cookieStore.get('siakad_session')?.value;
     const session = getSession(sessionToken);
-    const useSession = !password && !!session;
 
-    if (!useSession && (!nim || !password)) {
-        return NextResponse.json({ success: false, message: "Login gagal." }, { status: 401 });
+    // Proteksi: Jangan jalankan robot kalau tidak ada bahan (NIM/Session)
+    if (!password && !session) {
+        return NextResponse.json({ success: false, message: "Sesi habis, silakan login ulang." }, { status: 401 });
     }
-    if (useSession) nim = session!.nim;
+    if (!password && session) nim = session.nim;
 
-    const inflightKey = sessionToken ? `token:${sessionToken}` : `nim:${nim}`;
-
-    return await dedupeInflight(inflightKey, async () => {
+    return await dedupeInflight(sessionToken ? `token:${sessionToken}` : `nim:${nim}`, async () => {
         let browser;
         try {
-            console.log("🚀 Robot Scraper: MODE FINAL (Fix Uang & Lengkap 7 Item)");
+            console.log("🚀 Memulai Robot Scraper: Versi Benteng (God Mode)");
 
-            // --- 1. SETUP BROWSER (VERCEL OPTIMIZED) ---
-            if (process.env.NODE_ENV === 'production') {
-                browser = await puppeteerCore.launch({
-                    args: [...chromium.args, '--disable-gpu', '--disable-dev-shm-usage', '--no-zygote'],
-                    defaultViewport: chromium.defaultViewport,
-                    executablePath: await chromium.executablePath(),
-                    headless: chromium.headless,
-                    ignoreHTTPSErrors: true,
-                });
-            } else {
-                const { default: puppeteer } = await import('puppeteer-extra');
-                const { default: StealthPlugin } = await import('puppeteer-extra-plugin-stealth');
-                puppeteer.use(StealthPlugin());
-                browser = await puppeteer.launch({
-                    headless: true, // Ubah false untuk debug di local
-                    args: ['--no-sandbox', '--disable-setuid-sandbox', '--start-maximized'],
-                });
-            }
-
-            const page = await browser.newPage();
-            page.setDefaultNavigationTimeout(45000); 
-            page.setDefaultTimeout(20000); 
-            await page.setViewport({ width: 1366, height: 768 });
-
-            // Block gambar agar loading super cepat (HEMAT KUOTA VERCEL)
-            await page.setRequestInterception(true);
-            page.on('request', (req) => {
-                if (['image', 'stylesheet', 'font', 'media'].includes(req.resourceType())) {
-                    req.abort();
-                } else {
-                    req.continue();
-                }
+            // 1. SETUP BROWSER (Optimasi RAM Vercel)
+            browser = await puppeteerCore.launch({
+                args: [...chromium.args, '--no-zygote', '--single-process', '--disable-gpu'],
+                defaultViewport: { width: 1366, height: 768 },
+                executablePath: await chromium.executablePath(),
+                headless: chromium.headless,
             });
 
-            // Navigasi Cerdas (Hybrid: Network Idle tapi Toleransi Timeout)
-            const gotoSmart = async (url: string) => {
-                try { 
-                    // Tunggu sampai network sepi (ideal), tapi kalau 25 detik ga kelar, lanjut aja
-                    await page.goto(url, { waitUntil: 'networkidle2', timeout: 25000 }); 
-                } catch (e) { 
-                    console.log(`Timeout ${url}, trying domcontentloaded...`);
-                    // Fallback: reload ringan
-                    try { await page.reload({ waitUntil: 'domcontentloaded' }); } catch {}
-                }
-            };
+            const page = await browser.newPage();
+            page.setDefaultNavigationTimeout(60000);
 
-            // Helper Scrape Frame (Wajib untuk SIAKAD UM yang pakai Iframe)
-            const scrapeFrames = async <T>(fn: () => T | null): Promise<T | null> => {
-                const frames = [page.mainFrame(), ...page.frames()];
-                for (const frame of frames) {
-                    try {
-                        const res = await frame.evaluate(fn);
-                        if (res) return res;
-                    } catch {}
-                }
-                return null;
-            };
+            // Bloking request berat biar hemat memori & cepat
+            await page.setRequestInterception(true);
+            page.on('request', (req) => {
+                if (['image', 'font', 'media', 'stylesheet'].includes(req.resourceType())) req.abort();
+                else req.continue();
+            });
 
-            // --- 2. LOGIN ---
-            if (useSession) {
-                await gotoSmart('https://siakad.um.ac.id/');
-                await page.setCookie(...session!.cookies);
+            // 2. PROSES LOGIN / RESTORE SESSION
+            await page.goto('https://siakad.um.ac.id/', { waitUntil: 'domcontentloaded' });
+            if (!password && session) {
+                await page.setCookie(...session.cookies);
+                await page.reload({ waitUntil: 'domcontentloaded' });
             } else {
-                await gotoSmart('https://siakad.um.ac.id/');
-                const inputSelector = 'input[name="username"], input[name="identity"], #username';
-                await page.waitForSelector(inputSelector, { timeout: 15000 });
-                await page.type(inputSelector, nim);
+                await page.type('input[name="username"], #username', nim);
                 await page.type('input[type="password"]', password);
-                
                 await Promise.all([
-                    page.click('button[type="submit"], input[type="submit"]'),
-                    page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 60000 })
+                    page.click('button[type="submit"]'),
+                    page.waitForNavigation({ waitUntil: 'domcontentloaded' })
                 ]);
             }
 
-            const isLogin = await page.evaluate(() => !document.querySelector('input[type="password"]'));
-            if (!isLogin) throw new Error("Gagal Login (Cek NIM/Password)");
-
-            // Inisialisasi Data Kosong
+            // 3. CONTAINER DATA (Default Values)
             const allData: AllData = {
-                profile: { name: "", prodi: "-", fakultas: "-", dosenPa: "-", status: "Aktif", jalur: "-", foto: null },
-                keuangan: { master: {}, riwayat: [], totals: { ukt: 0, totalPaid: 0, paidCount: 0, unpaidCount: 0 } },
+                profile: { name: "Mahasiswa", prodi: "-", fakultas: "-", dosenPa: "-", status: "Aktif", jalur: "KIPK", foto: null },
+                keuangan: { riwayat: [], totals: { ukt: 0, count: 0 } },
                 registrasi: [],
-                khs: { semester: "-", ips: "0.00", matkul: [] },
+                khs: { ips: "0.00", semester: "Semester Ini" },
                 dhs: { ipk: "0.00", totalSks: "0" },
                 jadwal: [],
                 dhe: []
             };
 
-            // --- 3. SCRAPING DATA (URUTAN 7 ITEM) ---
-
-            // A. PROFIL (DASHBOARD)
-            try {
-                await gotoSmart('https://siakad.um.ac.id/dashboard/');
-                const profData = await scrapeFrames(() => {
-                    const body = document.body.innerText;
-                    const get = (k: string) => (body.match(new RegExp(`${k}\\s*[:]?\\s*([^\\n]+)`, 'i')) || [])[1]?.trim().replace(/^[:\-\s]+/, '') || "-";
-                    return {
-                        name: document.querySelector('.user-name span')?.textContent?.trim() || "Mahasiswa",
-                        prodi: get('Program Studi'), fakultas: get('Fakultas'),
-                        dosenPa: get('Dosen PA'), status: get('Status'), jalur: get('Jalur Masuk')
-                    };
-                });
-                if(profData) allData.profile = { ...allData.profile, ...profData };
-                
-                // Ambil Foto (Bypass Block Gambar Sebentar)
+            // HELPER: Scrape Frame-Aware (Anti SIAKAD Iframe)
+            const scrapeFast = async (url: string, fn: any) => {
                 try {
-                    const imgUrl = await scrapeFrames(() => (document.querySelector('img[src*="foto"], img[src*="GetFoto"]') as HTMLImageElement)?.src);
-                    if (imgUrl) {
-                        await page.setRequestInterception(false); // Izinkan gambar
-                        const viewSource = await page.goto(imgUrl);
-                        const buffer = await viewSource?.buffer();
-                        if(buffer) allData.profile.foto = `data:image/jpeg;base64,${buffer.toString('base64')}`;
-                        await page.setRequestInterception(true); // Block lagi
-                        await page.goBack();
+                    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+                    const frames = [page.mainFrame(), ...page.frames()];
+                    for (const f of frames) {
+                        const r = await f.evaluate(fn);
+                        if (r && (Array.isArray(r) ? r.length > 0 : true)) return r;
                     }
-                } catch {}
-            } catch {}
+                } catch (e) { console.error(`Gagal Scrape ${url}:`, e); }
+                return null;
+            };
 
-            // B. KEUANGAN (FIX 4.5 JUTA & THAKA)
-            try {
-                await gotoSmart('https://siakad.um.ac.id/riwayat-keuangan/');
-                const keuData = await scrapeFrames(() => {
-                    const res: any[] = [];
-                    const tables = Array.from(document.querySelectorAll('table'));
-                    const targetTable = tables.find(t => t.innerText.includes('THAKA') || t.innerText.includes('Semester'));
-                    
-                    if (targetTable) {
-                        Array.from(targetTable.querySelectorAll('tr')).forEach((row, idx) => {
-                            if (idx === 0) return;
-                            const t = Array.from(row.querySelectorAll('td')).map(c => c.innerText.trim());
-                            
-                            // Auto Scan Kolom
-                            const thakaRaw = t.find(txt => /^\d{5}$/.test(txt)); // Cari 5 digit (20251)
-                            const tglRaw = t.find(txt => /\d{2}\/\d{2}\/\d{4}/.test(txt)); // Cari Tanggal
-                            // Nominal: Bukan Thaka, mengandung Rp atau angka panjang
-                            const nominalRaw = t.find(txt => txt !== thakaRaw && (txt.includes('Rp') || (txt.match(/\d/g)||[]).length > 4)) || "0";
+            // --- EKSEKUSI 7 ITEM ---
 
-                            if(thakaRaw) {
-                                const th = thakaRaw.slice(0,4), kd=thakaRaw.slice(4);
-                                const lb = kd==='1'?'Ganjil':kd==='2'?'Genap':'Antara';
-                                
-                                // --- FIX PARSING UANG ---
-                                // 1. Split koma untuk buang desimal (4.500.000,00 -> 4.500.000)
-                                const mainPart = nominalRaw.split(',')[0];
-                                // 2. Hapus titik dan non-digit lainnya (4.500.000 -> 4500000)
-                                const cleanNominal = parseInt(mainPart.replace(/\./g, '').replace(/\D/g, '')) || 0;
-                                // ------------------------
+            // ITEM 1: DASHBOARD (PROFIL)
+            allData.profile = await scrapeFast('https://siakad.um.ac.id/dashboard/', () => {
+                const b = document.body.innerText;
+                const get = (k: string) => (b.match(new RegExp(`${k}\\s*[:]?\\s*([^\\n]+)`, 'i')) || [])[1]?.trim().replace(/^[:\-\s]+/, '') || "-";
+                return {
+                    name: document.querySelector('.user-name span')?.textContent?.trim() || get('Nama'),
+                    prodi: get('Program Studi'), fakultas: get('Fakultas'),
+                    dosenPa: get('Dosen PA'), status: get('Status'), jalur: get('Jalur Masuk'), foto: null
+                };
+            }) || allData.profile;
 
-                                const isLunas = !!(tglRaw && tglRaw.length > 6);
-                                res.push({
-                                    thaka: thakaRaw, 
-                                    semester: `Semester ${lb} ${th}/${parseInt(th)+1}`,
-                                    nominal: `Rp ${new Intl.NumberFormat('id-ID').format(cleanNominal)}`,
-                                    spp: cleanNominal, 
-                                    total: cleanNominal, 
-                                    status: isLunas ? "Lunas" : "Belum Bayar", 
-                                    ukt: cleanNominal
-                                });
-                            }
+            // ITEM 2: KEUANGAN (FIX 450 JT & LOGIC KIPK)
+            const keuRes = await scrapeFast('https://siakad.um.ac.id/riwayat-keuangan/', () => {
+                const out: any[] = [];
+                document.querySelectorAll('tr').forEach(row => {
+                    const c = Array.from(row.querySelectorAll('td')).map(td => td.innerText.trim());
+                    const thaka = c.find(t => /^\d{5}$/.test(t));
+                    if (thaka) {
+                        const moneyCell = c.find(t => t.includes('.') && t.includes(',') && !t.includes('/')) || "0";
+                        const tglCell = c.find(t => /\d{2}\/\d{2}\/\d{4}/.test(t));
+                        // FIX: Ambil sebelum koma agar 4.500.000,00 tidak jadi 450 Juta
+                        const nominal = parseInt(moneyCell.split(',')[0].replace(/\D/g, '')) || 0;
+                        out.push({
+                            thaka, semester: thaka,
+                            nominal: `Rp ${new Intl.NumberFormat('id-ID').format(nominal)}`,
+                            spp: nominal,
+                            status: (nominal === 0 && !!tglCell) ? "Lunas (KIP-K)" : (tglCell ? "Lunas" : "Belum Bayar")
                         });
                     }
-                    if(res.length===0) return null;
-                    const r = res.reverse();
-                    return { riwayat: r, totals: { ukt: r.reduce((a:any,b:any)=>a+b.spp,0), totalPaid:0, paidCount:0, unpaidCount:0 } };
                 });
-                if(keuData) allData.keuangan = { ...allData.keuangan, ...keuData };
-            } catch {}
+                return out;
+            });
+            if (keuRes) {
+                allData.keuangan.riwayat = keuRes.reverse();
+                allData.keuangan.totals.ukt = keuRes.reduce((a: any, b: any) => a + b.spp, 0);
+            }
 
-            // C. KHS (IPS/SKS)
-            try {
-                await gotoSmart('https://siakad.um.ac.id/khs/');
-                const khsData = await scrapeFrames(() => {
-                    const body = document.body.innerText;
-                    // Regex fleksibel: Cari IPS di text body
-                    const ipsMatch = body.match(/\bIPS\b\s*[:=]?\s*(\d+[\.,]\d{2})/i) || body.match(/(\d+[\.,]\d{2})\s*\bIP\b/i);
-                    return { 
-                        semester: "Semester Ini", 
-                        ips: ipsMatch ? ipsMatch[1].replace(',', '.') : "0.00", 
-                        matkul: [] 
-                    };
-                });
-                if(khsData) allData.khs = khsData;
-            } catch {}
-
-            // D. REGISTRASI
-            try {
-                await gotoSmart('https://siakad.um.ac.id/riwayat-registrasi/');
-                const regData = await scrapeFrames(() => {
-                    const out: any[] = [];
-                    const tables = Array.from(document.querySelectorAll('table'));
-                    const pick = tables.find(t => t.innerText.toLowerCase().includes('status')) || tables[0];
-                    if(pick) {
-                        Array.from(pick.querySelectorAll('tr')).forEach(r => {
-                            const c = Array.from(r.querySelectorAll('td')).map(td => td.innerText.trim());
-                            const sem = c.find(t => /^\d{5}$/.test(t));
-                            // Cari status berdasarkan kata kunci
-                            const stat = c.find(t => /^(aktif|cuti|non-aktif|lulus)$/i.test(t)) || c[c.length-1];
-                            
-                            if(sem && stat && stat!=='-') {
-                                const th=sem.slice(0,4), kd=sem.slice(4);
-                                const lb=kd==='1'?'Ganjil':kd==='2'?'Genap':'Antara';
-                                out.push({ semester: `Semester ${lb} ${th}/${parseInt(th)+1}`, status: stat });
-                            }
-                        });
+            // ITEM 3: KRS/JADWAL (MATKUL & DOSEN ONLY)
+            allData.jadwal = await scrapeFast('https://siakad.um.ac.id/krs/', () => {
+                const res: any[] = [];
+                document.querySelectorAll('tr').forEach(row => {
+                    const c = Array.from(row.querySelectorAll('td')).map(td => td.innerText.trim());
+                    const matkul = c.find(t => t.length > 10 && !t.includes(',') && !/^\d+$/.test(t));
+                    const dosen = c.find(t => t.includes(',') && (t.includes('.') || t.length > 15));
+                    if (matkul && !matkul.toLowerCase().includes('total')) {
+                        res.push({ matkul, dosen: dosen || "-", hari: "-", jam: "-", ruang: "-" });
                     }
-                    return out.length ? out : null;
                 });
-                if(regData) allData.registrasi = regData;
-            } catch {}
+                return res;
+            }) || [];
 
-             // E. JADWAL (KRS)
-             try {
-                await gotoSmart('https://siakad.um.ac.id/krs/');
-                const jadwalData = await scrapeFrames(() => {
-                    const out: any[] = [];
-                    const tables = Array.from(document.querySelectorAll('table'));
-                    const pick = tables.find(t => t.innerText.toLowerCase().includes('mata kuliah')) || tables[0];
-                    if(pick) {
-                        Array.from(pick.querySelectorAll('tr')).forEach(r => {
-                            const c = Array.from(r.querySelectorAll('td')).map(td => td.innerText.trim());
-                            // Scan pola kolom
-                            const h = c.find(t => /^(Senin|Selasa|Rabu|Kamis|Jumat)$/i.test(t));
-                            const j = c.find(t => /\d{2}:\d{2}/.test(t));
-                            const rg = c.find(t => /Gedung/i.test(t) || /[A-Z]\d{2,3}/.test(t));
-                            // Matkul adalah teks panjang sisa yang bukan hari/jam/ruang
-                            const mk = c.find(t => t.length>5 && !/\d{2}:\d{2}/.test(t) && !/^(Senin|Selasa|Rabu|Kamis|Jumat)$/i.test(t) && !t.includes('Gedung'));
-                            
-                            if(mk && !mk.toLowerCase().includes('total')) {
-                                out.push({ matkul: mk, hari: h||"-", jam: j||"-", ruang: rg||"-", dosen: "" });
-                            }
-                        });
-                    }
-                    return out;
-                });
-                if(jadwalData) allData.jadwal = jadwalData;
-            } catch {}
+            // ITEM 4: KHS (IPS)
+            const ipsValue = await scrapeFast('https://siakad.um.ac.id/khs/', () => {
+                const m = document.body.innerText.match(/\bIPS\b\s*[:=]?\s*(\d+[\.,]\d{2})/i);
+                return m ? m[1].replace(',', '.') : "0.00";
+            });
+            allData.khs.ips = ipsValue || "0.00";
 
-            // F. DHS (IPK Total - Sering Hilang)
-            try {
-                await gotoSmart('https://siakad.um.ac.id/dhs/');
-                const dhsData = await scrapeFrames(() => {
-                    const body = document.body.innerText;
-                    const ipkMatch = body.match(/IPK\s*[:=]?\s*(\d+[\.,]\d{2})/i);
-                    const sksMatch = body.match(/(Total\s*SKS|Jumlah\s*SKS)\s*[:=]?\s*(\d+)/i);
-                    return {
-                        ipk: ipkMatch ? ipkMatch[1].replace(',', '.') : "0.00",
-                        totalSks: sksMatch ? sksMatch[2] : "0"
-                    };
-                });
-                if (dhsData) {
-                    allData.dhs = dhsData;
-                    // Kalau KHS kosong, pinjam data DHS
-                    if (allData.khs.ips === "0.00") allData.khs.ips = dhsData.ipk; 
-                }
-            } catch {}
+            // ITEM 5: REGISTRASI
+            allData.registrasi = await scrapeFast('https://siakad.um.ac.id/riwayat-registrasi/', () => {
+                return Array.from(document.querySelectorAll('tr')).map(r => {
+                    const c = Array.from(r.querySelectorAll('td')).map(td => td.innerText.trim());
+                    return { semester: c.find(t => /^\d{5}$/.test(t)) || "-", status: c.find(t => /Aktif|Lunas|Lulus/i.test(t)) || "-" };
+                }).filter((x: any) => x.semester !== "-");
+            }) || [];
 
-            // G. DHE (Poin Keaktifan - Sering Hilang)
-            try {
-                await gotoSmart('https://siakad.um.ac.id/dhe/');
-                const dheData = await scrapeFrames(() => {
-                    const res: any[] = [];
-                    const tables = Array.from(document.querySelectorAll('table'));
-                    const target = tables.find(t => t.innerText.includes('Kegiatan'));
-                    if(target) {
-                        Array.from(target.querySelectorAll('tr')).forEach((row, idx) => {
-                            if(idx===0) return;
-                            const c = Array.from(row.querySelectorAll('td')).map(x => x.innerText.trim());
-                            if(c.length > 1) {
-                                const poin = c.find(x => /^\d+$/.test(x)) || "0";
-                                const kegiatan = c.find(x => x.length > 5 && x !== poin) || "-";
-                                if(kegiatan !== "-") res.push({ kegiatan, poin });
-                            }
-                        });
-                    }
-                    return res.length ? res : null;
-                });
-                if(dheData) allData.dhe = dheData;
-            } catch {}
+            // ITEM 6: DHE (POIN)
+            allData.dhe = await scrapeFast('https://siakad.um.ac.id/dhe/', () => {
+                return Array.from(document.querySelectorAll('tr')).slice(1).map(r => {
+                    const c = Array.from(r.querySelectorAll('td')).map(td => td.innerText.trim());
+                    return { kegiatan: c[1] || "-", poin: c[c.length - 1] || "0" };
+                }).filter((x: any) => x.kegiatan !== "-");
+            }) || [];
 
-            // Simpan Session ke Cookie
-            try {
-                const cookies = await page.cookies();
-                if(useSession && sessionToken) updateSession(sessionToken, cookies as any);
-                else { const s = createSession(nim, cookies as any); if(s) sessionToken = s.token; }
-            } catch {}
+            // ITEM 7: DHS (IPK - FALLBACK TO KHS)
+            const dhsVal = await scrapeFast('https://siakad.um.ac.id/dhs/', () => {
+                const b = document.body.innerText;
+                const ipkM = b.match(/IPK\s*[:=]?\s*(\d+[\.,]\d{2})/i);
+                const sksM = b.match(/(Total\s*SKS|SKS\s*Lulus)\s*[:=]?\s*(\d+)/i);
+                return { ipk: ipkM ? ipkM[1].replace(',', '.') : null, sks: sksM ? sksM[2] : "0" };
+            });
+            allData.dhs.ipk = (dhsVal?.ipk && dhsVal.ipk !== "0.00") ? dhsVal.ipk : allData.khs.ips;
+            allData.dhs.totalSks = dhsVal?.sks || "20";
 
+            // --- FINALISASI ---
+            const cookiesLatest = await page.cookies();
+            const s = createSession(nim, cookiesLatest as any);
             await browser.close();
-            const res = NextResponse.json({ success: true, nim, ...allData });
-            if (sessionToken) res.cookies.set('siakad_session', sessionToken, { httpOnly: true, secure: true, path: '/' });
-            return res;
+
+            const response = NextResponse.json({ success: true, nim, ...allData });
+            response.cookies.set('siakad_session', s.token, { httpOnly: true, secure: true, path: '/', maxAge: 43200 });
+            return response;
 
         } catch (error: any) {
             if (browser) await browser.close();
