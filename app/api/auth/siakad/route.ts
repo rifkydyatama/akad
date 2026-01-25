@@ -55,39 +55,25 @@ export async function POST(req: Request) {
 
   let browser: any | null = null;
   try {
-    // Dynamic imports depending on environment
     const isProd = process.env.NODE_ENV === 'production' || process.env.VERCEL === '1';
     if (isProd) {
+      // Production: use puppeteer-core + @sparticuz/chromium-min
       const puppeteerCore = await import('puppeteer-core');
-      const chromiumMod = await import('@sparticuz/chromium-min');
-      const Chromium = (chromiumMod && (chromiumMod.default || chromiumMod)) as any;
-      let executablePath: string | undefined;
-      try {
-        if (Chromium && typeof Chromium.executablePath === 'function') executablePath = await Chromium.executablePath();
-      } catch (e) {
-        // ignore
-      }
-
-      const args = (Chromium && (Chromium.args || Chromium.defaultArgs)) || ['--no-sandbox', '--disable-setuid-sandbox'];
-
+      const chromium = (await import('@sparticuz/chromium-min')) as any;
       browser = await puppeteerCore.launch({
-        executablePath: executablePath || undefined,
+        executablePath: chromium.executablePath,
         headless: true,
-        args,
+        args: chromium.args,
         defaultViewport: null,
       });
     } else {
-      // Local/dev: try puppeteer-extra first, fall back to puppeteer
-      let puppeteerMod: any;
-      try {
-        puppeteerMod = await import('puppeteer-extra');
-        puppeteerMod = puppeteerMod && (puppeteerMod.default || puppeteerMod);
-      } catch {
-        puppeteerMod = await import('puppeteer');
-        puppeteerMod = puppeteerMod && (puppeteerMod.default || puppeteerMod);
-      }
-
-      browser = await puppeteerMod.launch({ headless: false, defaultViewport: null, args: ['--no-sandbox'] });
+      // Development: use puppeteer-extra (which uses local puppeteer)
+      const puppeteerExtra = (await import('puppeteer-extra')).default;
+      browser = await puppeteerExtra.launch({
+        headless: false,
+        defaultViewport: null,
+        args: ['--no-sandbox'],
+      });
     }
 
     const page = await browser.newPage();
@@ -97,9 +83,12 @@ export async function POST(req: Request) {
     await page.goto(url, { waitUntil: 'networkidle2', timeout: 60_000 });
 
     // Extract tables as arrays of rows->cells text
-    const tables: string[][][] = await page.$$eval('table', (nodes) =>
-      nodes.map((t) =>
-        Array.from(t.querySelectorAll('tr')).map((tr) => Array.from(tr.querySelectorAll('th,td')).map((td) => (td.textContent || '').trim())),
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const tables: string[][][] = await page.$$eval('table', (nodes: any) =>
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      nodes.map((t: any) =>
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        Array.from(t.querySelectorAll('tr')).map((tr: any) => Array.from(tr.querySelectorAll('th,td')).map((td: any) => (td.textContent || '').trim())),
       ),
     );
 
@@ -199,8 +188,9 @@ export async function POST(req: Request) {
     };
 
     return NextResponse.json({ success: true, keuangan: keuanganPayload, registrasi }, { status: 200 });
-  } catch (err: any) {
-    return NextResponse.json({ success: false, message: String(err && err.message ? err.message : err) }, { status: 500 });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    return NextResponse.json({ success: false, message }, { status: 500 });
   } finally {
     try {
       if (browser) await browser.close();
