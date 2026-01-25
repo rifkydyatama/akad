@@ -351,9 +351,54 @@ export async function POST(request: Request) {
                 outSessionToken = created.token;
             }
 
+            // Post-process: compute dashboard summaries and schedule stats
+            // Fill profile.nim if not present
+            allData.profile.nim = allData.profile.nim || nim;
+
+            // Dashboard: IP / Total SKS / Payment summary
+            const totalSksFromKhs = (allData.khs.matkul || []).reduce((s:any, m:any) => s + (m.sks || 0), 0);
+            allData.dashboard = allData.dashboard || {};
+            allData.dashboard.term = semesterAktif || allData.dashboard.term || '';
+            allData.dashboard.ip = allData.dhs.ipk || allData.khs.ips || '0.00';
+            allData.dashboard.sks = Number(allData.dhs.totalSks || totalSksFromKhs || 0);
+
+            // Payment status summary
+            const totalPaid = allData.keuangan.totals?.ukt || 0;
+            allData.dashboard.paymentStatus = totalPaid > 0 ? 'Anda sudah membayar' : 'Belum Bayar';
+
+            // Schedule stats
+            const totalClasses = finalJadwal.length;
+            const editedCount = finalJadwal.filter((j:any) => (j.hari && j.hari !== '-' && j.hari !== '') || (j.jam && j.jam !== '-' && j.jam !== '') || (j.ruang && j.ruang !== '-' && j.ruang !== '')).length;
+
+            // Today's schedule (by Bahasa day names)
+            const dayNames: Record<number, string> = {0:'Minggu',1:'Senin',2:'Selasa',3:'Rabu',4:'Kamis',5:"Jumat",6:'Sabtu'};
+            const todayName = dayNames[new Date().getDay()];
+            const scheduleToday = finalJadwal.filter((j:any) => (j.hari || '').toLowerCase().includes(todayName.toLowerCase()));
+
+            // Enrich response
+            const responsePayload = {
+                success: true,
+                nim,
+                profile: allData.profile,
+                dashboard: allData.dashboard,
+                keuangan: allData.keuangan,
+                registrasi: allData.registrasi,
+                khs: allData.khs,
+                dhs: allData.dhs,
+                jadwal: finalJadwal,
+                dhe: allData.dhe,
+                scheduleChanges,
+                scheduleStats: {
+                    totalClasses,
+                    editedCount,
+                    scheduleTodayCount: scheduleToday.length,
+                    scheduleToday,
+                },
+            };
+
             await browser.close();
 
-            const response = NextResponse.json({ success: true, nim, ...allData, scheduleChanges });
+            const response = NextResponse.json(responsePayload);
             if (outSessionToken) response.cookies.set('siakad_session', outSessionToken, { httpOnly: true, secure: true, path: '/', maxAge: 43200 });
             return response;
 
