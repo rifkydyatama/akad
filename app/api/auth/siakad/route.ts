@@ -182,7 +182,8 @@ export async function POST(request: Request) {
         } else {
             // Development/local: keep using puppeteer-extra + stealth for full feature parity while testing
             try {
-                const puppeteerExtra = await import('puppeteer-extra');
+                const puppeteerExtraMod = await import('puppeteer-extra');
+                const puppeteerExtra = (puppeteerExtraMod && (puppeteerExtraMod.default || puppeteerExtraMod)) as any;
                 const stealthMod = await import('puppeteer-extra-plugin-stealth');
                 const StealthPlugin = (stealthMod && (stealthMod.default || stealthMod));
                 if (typeof StealthPlugin === 'function') {
