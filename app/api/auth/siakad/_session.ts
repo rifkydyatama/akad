@@ -15,6 +15,9 @@ export type SiakadSession = {
   cookies: SerializableCookie[];
   createdAt: number;
   updatedAt: number;
+  // Optional metadata stored by the scraper
+  semester?: string;
+  jadwal?: unknown[];
 };
 
 type InflightValue<T> = {
@@ -91,10 +94,19 @@ export function createSession(nim: string, cookies: SerializableCookie[]): Siaka
   return session;
 }
 
-export function updateSession(token: string, cookies: SerializableCookie[]): SiakadSession | null {
+export function updateSession(token: string, cookies: SerializableCookie[], meta?: Partial<SiakadSession>): SiakadSession | null {
   const existing = sessions.get(token);
   if (!existing) return null;
-  const updated: SiakadSession = { ...existing, cookies, updatedAt: Date.now() };
+  const updated: SiakadSession = { ...existing, cookies, ...(meta || {}), updatedAt: Date.now() };
+  sessions.set(token, updated);
+  return updated;
+}
+
+// Convenience helper to update only metadata without changing cookies
+export function setSessionMeta(token: string, meta: Partial<SiakadSession>): SiakadSession | null {
+  const existing = sessions.get(token);
+  if (!existing) return null;
+  const updated: SiakadSession = { ...existing, ...meta, updatedAt: Date.now() };
   sessions.set(token, updated);
   return updated;
 }
