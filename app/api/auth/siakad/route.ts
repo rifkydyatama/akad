@@ -147,23 +147,20 @@ export async function POST(request: Request) {
             // Production serverless environment: use puppeteer-core + sparticuz chromium
             try {
                 const puppeteerCore = await import('puppeteer-core');
-                const chromium = await import('@sparticuz/chromium-min');
+                const chromiumMod = await import('@sparticuz/chromium-min');
+                const Chromium = (chromiumMod && (chromiumMod.default || chromiumMod)) as any;
 
-                // Resolve executablePath. Try common export shapes defensively.
+                // Resolve executablePath via Chromium.executablePath()
                 let executablePath: string | undefined;
                 try {
-                    if (chromium && typeof chromium.executablePath === 'function') {
-                        executablePath = await chromium.executablePath();
-                    } else if (chromium && chromium.executablePath) {
-                        executablePath = chromium.executablePath;
-                    } else if (chromium && chromium.path) {
-                        executablePath = chromium.path;
+                    if (Chromium && typeof Chromium.executablePath === 'function') {
+                        executablePath = await Chromium.executablePath();
                     }
                 } catch (e) {
                     console.warn('Failed to resolve chromium executablePath:', e);
                 }
 
-                const args = (chromium && (chromium.args || chromium.defaultArgs)) || [
+                const args = (Chromium && (Chromium.args || Chromium.defaultArgs)) || [
                     '--no-sandbox',
                     '--disable-setuid-sandbox',
                     '--disable-dev-shm-usage',
