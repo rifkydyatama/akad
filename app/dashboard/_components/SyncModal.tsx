@@ -34,7 +34,7 @@ export default function SyncModal({ open, onClose }: { open: boolean; onClose: (
         const msg = data.message || "Sinkronisasi gagal.";
         alert(msg);
         if (res.status === 401) {
-          router.push("/login");
+          router.push("/");
         }
       }
     } catch {

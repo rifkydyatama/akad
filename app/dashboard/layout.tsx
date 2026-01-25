@@ -51,7 +51,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   useEffect(() => {
     const nim = localStorage.getItem("user_nim");
     if (!nim) {
-      router.replace("/login");
+      router.replace("/");
       return;
     }
     queueMicrotask(() => setReady(true));
@@ -106,7 +106,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           // persistSiakadUser emits "siakad-sync"; still refresh in case of server components.
           router.refresh();
         } else if (res.status === 401) {
-          router.replace("/login");
+          router.replace("/");
         }
       } catch {
         // Silent fail; user can manual sync.
@@ -146,7 +146,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     if (confirm("Keluar dari aplikasi?")) {
       localStorage.clear();
       sessionStorage.clear();
-      router.push("/login");
+      router.push("/");
     }
   };
 

@@ -74,7 +74,7 @@ export default function DashboardHome() {
         const nim = localStorage.getItem("user_nim") || "";
         const password = localStorage.getItem("user_password") || "";
         if (!nim || !password) {
-            router.replace("/login");
+            router.replace("/");
             return;
         }
 
@@ -122,7 +122,7 @@ export default function DashboardHome() {
                 });
                 const data = (await res.json()) as SiakadAuthPayload;
                 if (!data?.success) {
-                    if (res.status === 401) router.replace("/login");
+                    if (res.status === 401) router.replace("/");
                     return;
                 }
                 if (cancelled) return;
