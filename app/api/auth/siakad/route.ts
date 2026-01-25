@@ -21,7 +21,6 @@ type Profile = {
     jalur: string;
     foto: string | null;
 };
-type KeuanganItem = { semester?: string; nominal?: string; status?: string };
 type RegistrasiItem = { semester: string; status: string };
 type KhsItem = { matkul: string; sks: number; nilai: string };
 type Khs = { semester: string; ips: string; matkul: KhsItem[] };
@@ -70,7 +69,7 @@ export async function POST(request: Request) {
     return await dedupeInflight(inflightKey, async () => {
         let browser;
         try {
-            console.log("🚀 Memulai Robot Scraper (Vercel Fusion Mode)...");
+            console.log("🚀 Memulai Robot Scraper (Super Auto-Scan Mode)...");
 
             // --- 1. PILIH BROWSER (VERCEL vs LOCAL) ---
             if (process.env.NODE_ENV === 'production') {
@@ -87,7 +86,7 @@ export async function POST(request: Request) {
                 const { default: StealthPlugin } = await import('puppeteer-extra-plugin-stealth');
                 puppeteer.use(StealthPlugin());
                 browser = await puppeteer.launch({
-                    headless: true,
+                    headless: true, // Ubah false kalau mau lihat browser jalan
                     args: ['--no-sandbox', '--disable-setuid-sandbox', '--start-maximized'],
                 });
             }
@@ -98,14 +97,14 @@ export async function POST(request: Request) {
             await page.setViewport({ width: 1366, height: 768 });
             await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36');
 
-            // --- HELPER FRAME ---
+            // --- HELPER FRAME (ROBOT PENJELAJAH) ---
             const scrapeTableInFrames = async <T>(processorFn: () => T | null): Promise<T | null> => {
                 const frames = [page.mainFrame(), ...page.frames().filter(f => f !== page.mainFrame())];
                 for (const frame of frames) {
                     try {
                         const result = await frame.evaluate(processorFn);
                         if (result !== null && result !== undefined) {
-                            if (Array.isArray(result) && result.length === 0) continue; // Skip empty array
+                            if (Array.isArray(result) && result.length === 0) continue; 
                             return result;
                         }
                     } catch (e) { continue; }
@@ -148,7 +147,7 @@ export async function POST(request: Request) {
                 dhe: []
             };
 
-            // --- 3. PROFIL ---
+            // --- 3. PROFIL (AMAN) ---
             try {
                 await gotoWithRetry('https://siakad.um.ac.id/dashboard/');
                 const profData = await scrapeTableInFrames(() => {
@@ -167,10 +166,9 @@ export async function POST(request: Request) {
                         jalur: get('Jalur Masuk')
                     };
                 });
-                
                 if(profData) allData.profile = { ...allData.profile, ...profData };
 
-                // Ambil Foto (Opsional)
+                // Foto Profil
                 try {
                     const imgUrl = await page.evaluate(() => (document.querySelector('img[src*="foto"], img[src*="GetFoto"]') as HTMLImageElement)?.src);
                     if (imgUrl) {
@@ -180,57 +178,60 @@ export async function POST(request: Request) {
                         await page.goBack();
                     }
                 } catch {}
-
             } catch {}
 
-            // --- 4. KEUANGAN (FIX 450JT & LOGIC MAS RIFKY) ---
+            // --- 4. KEUANGAN (FIX FATAL: THAKA KETUKAR NOMINAL) ---
             try {
                 await gotoWithRetry('https://siakad.um.ac.id/riwayat-keuangan/');
                 await new Promise(r => setTimeout(r, 1000));
                 
                 const keuData = await scrapeTableInFrames(() => {
                     const res: any[] = [];
+                    // Cari semua tabel, ambil yang ada 'THAKA' atau 'Semester'
                     const tables = Array.from(document.querySelectorAll('table'));
-                    const targetTable = tables.find(t => 
-                        (t.innerText.includes('THAKA') || t.innerText.includes('Thaka')) && 
-                        (t.innerText.includes('TGL BAYAR') || t.innerText.includes('Tgl Bayar'))
-                    );
+                    const targetTable = tables.find(t => t.innerText.includes('THAKA') || t.innerText.includes('Semester'));
                     
                     if (targetTable) {
-                        Array.from(targetTable.querySelectorAll('tr')).forEach((row, idx) => {
+                        const rows = Array.from(targetTable.querySelectorAll('tr'));
+                        rows.forEach((row, idx) => {
                             if (idx === 0) return;
-                            const cols = Array.from(row.querySelectorAll('td'));
-                            if (cols.length > 8) {
-                                const thakaRaw = cols[1]?.innerText.trim() || "";
-                                const nominalRaw = cols[2]?.innerText.trim() || "0";
-                                const tglBayarRaw = cols[10]?.innerText.trim();
+                            const texts = Array.from(row.querySelectorAll('td')).map(c => c.innerText.trim());
+                            
+                            // LOGIC SUPER AUTO: Cari berdasarkan format isi, bukan urutan kolom!
+                            
+                            // 1. Cari THAKA: Harus 5 digit angka (misal: 20251)
+                            const thakaRaw = texts.find(t => /^\d{5}$/.test(t));
+                            
+                            // 2. Cari NOMINAL: Cari yang ada 'Rp' atau format angka ribuan (misal: 4.500.000)
+                            // Pastikan bukan THAKA
+                            const nominalRaw = texts.find(t => t !== thakaRaw && (t.includes('Rp') || (t.match(/\d/g) || []).length > 4 && t.includes(','))) || "0";
 
-                                if(thakaRaw) {
-                                    let semesterNama = thakaRaw;
-                                    if (thakaRaw.length === 5) {
-                                        const th = thakaRaw.substring(0, 4);
-                                        const kd = thakaRaw.substring(4, 5);
-                                        const lb = kd === '1' ? 'Ganjil' : (kd === '2' ? 'Genap' : 'Antara');
-                                        semesterNama = `Semester ${lb} ${th}/${parseInt(th) + 1}`;
-                                    }
+                            // 3. Cari Tanggal Bayar: Format dd/mm/yyyy
+                            const tglBayarRaw = texts.find(t => /\d{2}\/\d{2}\/\d{4}/.test(t));
 
-                                    // FIX 450JT: Buang karakter non-digit
-                                    const nominalValue = parseInt(nominalRaw.replace(/\D/g, '')) || 0;
-                                    const isLunas = (tglBayarRaw && tglBayarRaw.length > 5 && !tglBayarRaw.includes('-'));
-                                    const statusFinal = isLunas ? "Lunas" : "Belum Bayar";
-
-                                    res.push({
-                                        thaka: thakaRaw,
-                                        semester: semesterNama,
-                                        nominal: `Rp ${new Intl.NumberFormat('id-ID').format(nominalValue)}`,
-                                        spp: nominalValue,
-                                        total: nominalValue,
-                                        tglBayar: tglBayarRaw || "-",
-                                        status: statusFinal,
-                                        ukt: nominalValue,
-                                        rincian: [{ label: "SPP / UKT", value: nominalValue }]
-                                    });
+                            if(thakaRaw) {
+                                let semesterNama = thakaRaw;
+                                if (thakaRaw.length === 5) {
+                                    const th = thakaRaw.substring(0, 4);
+                                    const kd = thakaRaw.substring(4, 5);
+                                    const lb = kd === '1' ? 'Ganjil' : (kd === '2' ? 'Genap' : 'Antara');
+                                    semesterNama = `Semester ${lb} ${th}/${parseInt(th) + 1}`;
                                 }
+
+                                const nominalValue = parseInt(nominalRaw.replace(/\D/g, '')) || 0;
+                                const isLunas = (tglBayarRaw && tglBayarRaw.length > 5);
+                                const statusFinal = isLunas ? "Lunas" : "Belum Bayar";
+
+                                res.push({
+                                    thaka: thakaRaw,
+                                    semester: semesterNama,
+                                    nominal: `Rp ${new Intl.NumberFormat('id-ID').format(nominalValue)}`,
+                                    spp: nominalValue,
+                                    total: nominalValue,
+                                    tglBayar: tglBayarRaw || "-",
+                                    status: statusFinal,
+                                    rincian: [{ label: "SPP / UKT", value: nominalValue }]
+                                });
                             }
                         });
                     }
@@ -244,7 +245,7 @@ export async function POST(request: Request) {
                 if (keuData) allData.keuangan = { ...allData.keuangan, ...keuData };
             } catch (e) { console.log("Skip Keuangan"); }
 
-            // --- 5. REGISTRASI (LOGIC MAS RIFKY) ---
+            // --- 5. REGISTRASI (FIX: AUTO-SEARCH STATUS) ---
             try {
                 await gotoWithRetry('https://siakad.um.ac.id/riwayat-registrasi/');
                 await new Promise(r => setTimeout(r, 1000));
@@ -252,44 +253,40 @@ export async function POST(request: Request) {
                 const regData = await scrapeTableInFrames(() => {
                     const out: RegistrasiItem[] = [];
                     const tables = Array.from(document.querySelectorAll('table'));
-                    const pick = tables.find(t => t.innerText.toLowerCase().includes('status') || t.innerText.toLowerCase().includes('registrasi')) || tables[0];
+                    const pick = tables.find(t => t.innerText.toLowerCase().includes('status')) || tables[0];
                     
                     if (pick) {
                         const rows = Array.from(pick.querySelectorAll('tr'));
-                        const headerCells = Array.from(rows[0]?.querySelectorAll('th,td') || []).map(c => c.innerText.trim().toLowerCase());
-                        const idxThaka = headerCells.findIndex(h => h.includes('thaka') || h.includes('tahun'));
-                        const idxStatus = headerCells.findIndex(h => h.includes('status'));
-
-                        rows.slice(1).forEach(row => {
+                        rows.forEach(row => {
                             const cells = Array.from(row.querySelectorAll('td')).map(c => c.innerText.trim());
-                            if (cells.length < 2) return;
                             
-                            const rawSem = (idxThaka >= 0 ? cells[idxThaka] : cells[1] || cells[0]) || '-';
-                            const status = (idxStatus >= 0 ? cells[idxStatus] : cells[2] || cells[cells.length - 1]) || '-';
+                            // 1. Cari Semester (5 digit angka)
+                            const rawSem = cells.find(t => /^\d{5}$/.test(t));
+                            
+                            // 2. Cari Status (Keyword: Aktif, Cuti, Non-Aktif)
+                            // Jangan ambil kolom terakhir buta-buta
+                            let status = cells.find(t => /^(aktif|cuti|lulus|non-aktif|keluar)$/i.test(t));
+                            if (!status && cells.length > 2) status = cells[cells.length - 1]; // Fallback
 
-                            // Format Semester
-                            let finalSem = rawSem;
-                            if (/^\d{5}$/.test(rawSem)) {
+                            if (rawSem) {
+                                let finalSem = rawSem;
                                 const th = rawSem.slice(0, 4);
                                 const kd = rawSem.slice(4);
                                 const lb = kd === '1' ? 'Ganjil' : kd === '2' ? 'Genap' : 'Antara';
                                 finalSem = `Semester ${lb} ${th}/${parseInt(th)+1}`;
-                            } else if (rawSem.match(/(20\d{2})\s*\/\s*(20\d{2})/)) {
-                                const m = rawSem.match(/(20\d{2})\s*\/\s*(20\d{2})/);
-                                const l = rawSem.toLowerCase();
-                                const lb = l.includes('genap') ? 'Genap' : l.includes('ganjil') ? 'Ganjil' : 'Antara';
-                                if(m) finalSem = `Semester ${lb} ${m[1]}/${m[2]}`;
+                                
+                                if (status && status !== '-') {
+                                    out.push({ semester: finalSem, status });
+                                }
                             }
-                            out.push({ semester: finalSem, status });
                         });
                     }
                     return out.length > 0 ? out : null;
                 });
                 if (regData) {
                     allData.registrasi = regData;
-                    // Logic Active Thaka
                     const activeReg = regData.find(x => x.status.toLowerCase().includes('aktif'));
-                    if (activeReg && activeReg.semester) {
+                    if (activeReg) {
                          const m = activeReg.semester.match(/(\d{4})\/(\d{4})/);
                          const l = activeReg.semester.toLowerCase();
                          if(m) {
@@ -300,50 +297,45 @@ export async function POST(request: Request) {
                 }
             } catch (e) { console.log("Skip Registrasi"); }
 
-            // --- 6. KHS (LOGIC MAS RIFKY) ---
+            // --- 6. KHS (FIX: IPS LEBIH AKURAT) ---
             try {
                 await gotoWithRetry('https://siakad.um.ac.id/khs/');
                 await new Promise(r => setTimeout(r, 1000));
                 
-                // Coba switch periode kalau ada active thaka
-                if(allData.keuangan.totals.activeThaka) {
-                     await scrapeTableInFrames(() => {
-                        const activeThaka = "VAR_ACTIVE_THAKA"; // Placeholder, cannot pass var directly easily
-                        // Skip logic switch periode kompleks demi performa Vercel (bisa timeout)
-                        // Robot akan ambil periode default (Semester Ini)
-                        return null;
-                     });
-                }
-
                 const khsData = await scrapeTableInFrames(() => {
                     const body = document.body.innerText;
+                    // Cari IPS: 3.xx di teks halaman (lebih akurat daripada tabel)
                     const ipsMatch = body.match(/\bIPS\b\s*[:=]?\s*(\d[\.,]\d{2})/i) || body.match(/(\d[\.,]\d{2})\s*\bIP\b/i);
                     const ips = ipsMatch ? ipsMatch[1].replace(',', '.') : "0.00";
                     
                     const items: KhsItem[] = [];
                     const tables = Array.from(document.querySelectorAll('table'));
-                    const pick = tables.find(t => t.innerText.toLowerCase().includes('sks') && t.innerText.toLowerCase().includes('nilai')) || tables[0];
+                    // Cari tabel nilai yang ada kolom SKS dan Huruf
+                    const pick = tables.find(t => t.innerText.toLowerCase().includes('sks') && t.innerText.toLowerCase().includes('huruf')) || tables[0];
                     
                     if (pick) {
                         const rows = Array.from(pick.querySelectorAll('tr')).slice(1);
                         rows.forEach(row => {
                             const c = Array.from(row.querySelectorAll('td')).map(td => td.innerText.trim());
+                            // Filter baris yang valid (bukan header/footer)
                             if(c.length > 4) {
-                                // Logic simple: Cari angka SKS & Huruf Mutu
+                                // Cari angka 1 digit (SKS)
                                 const sksRaw = c.find(x => /^\d$/.test(x)) || "0";
+                                // Cari Nilai Huruf (A, B, C...)
                                 const nilai = c.find(x => /^[A-E][+-]?$/.test(x)) || "";
-                                const matkul = c.find(x => x.length > 5 && !/^\d+$/.test(x)) || "MK";
+                                // Sisanya nama Matkul
+                                const matkul = c.find(x => x.length > 5 && !/^\d+$/.test(x) && x !== nilai) || "MK";
+                                
                                 if(nilai) items.push({ matkul, sks: parseInt(sksRaw), nilai });
                             }
                         });
                     }
                     return { semester: "Semester Ini", ips, matkul: items };
                 });
-                
                 if (khsData) allData.khs = khsData;
             } catch (e) { console.log("Skip KHS"); }
 
-            // --- 7. DHS (IPK) ---
+            // --- 7. DHS (TRANSKRIP) ---
             try {
                 await gotoWithRetry('https://siakad.um.ac.id/dhs/');
                 const dhsData = await scrapeTableInFrames(() => {
@@ -358,7 +350,7 @@ export async function POST(request: Request) {
                 if (dhsData) allData.dhs = dhsData;
             } catch (e) { console.log("Skip DHS"); }
 
-            // --- 8. JADWAL (KRS) ---
+            // --- 8. JADWAL (FIX: AUTO DETECT HARI & JAM) ---
             try {
                 await gotoWithRetry('https://siakad.um.ac.id/krs/');
                 await new Promise(r => setTimeout(r, 1000));
@@ -369,15 +361,20 @@ export async function POST(request: Request) {
                     const pick = tables.find(t => t.innerText.toLowerCase().includes('mata kuliah') || t.innerText.toLowerCase().includes('hari')) || tables[0];
                     
                     if(pick) {
-                         const rows = Array.from(pick.querySelectorAll('tr')).slice(1);
+                         const rows = Array.from(pick.querySelectorAll('tr'));
                          rows.forEach(row => {
                             const c = Array.from(row.querySelectorAll('td')).map(x => x.innerText.trim());
+                            
+                            // 1. Cari HARI (Senin...Sabtu)
                             const hari = c.find(x => /^(Senin|Selasa|Rabu|Kamis|Jumat|Sabtu)$/i.test(x)) || "";
+                            // 2. Cari JAM (07:00)
                             const jam = c.find(x => /\d{2}:\d{2}/.test(x)) || "";
+                            // 3. Cari RUANG (Gedung...)
                             const ruang = c.find(x => /Gedung/i.test(x) || /[A-Z]\d{2,3}/.test(x)) || "";
+                            // 4. Cari MATKUL (Teks panjang sisa)
                             const matkul = c.find(x => x.length > 5 && !/\d{2}:\d{2}/.test(x) && !/^(Senin|Selasa|Rabu|Kamis|Jumat)$/i.test(x) && !x.includes('Gedung'));
 
-                            if (matkul && !matkul.toLowerCase().includes('total')) {
+                            if (matkul && hari && !matkul.toLowerCase().includes('total')) {
                                 out.push({ matkul, hari, jam, ruang, dosen: "" });
                             }
                          });
@@ -389,7 +386,7 @@ export async function POST(request: Request) {
 
             console.log("🎉 SELESAI!");
 
-            // Simpan Sesi
+            // Simpan Session
             try {
                 const cookies = await page.cookies();
                 if (useSession && sessionToken) updateSession(sessionToken, cookies as any);
