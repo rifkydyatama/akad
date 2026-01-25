@@ -60,7 +60,8 @@ function sharedResultToReturn<T>(shared: SharedResult): T {
   // Use Buffer for Node.js environment
   const body = Buffer.from(shared.body);
 
-  return new Response(body, {
+  // Cast body to any to satisfy Response constructor types in varied runtimes
+  return new Response(body as any, {
     status: shared.status,
     statusText: shared.statusText,
     headers,
