@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { GraduationCap, Lock, User, ArrowRight, Loader2 } from 'lucide-react';
-import { persistSiakadUser } from '../lib/persistUser';
+import { persistSiakadUser } from './lib/persistUser';
 
 export default function LoginPage() {
   const [nim, setNim] = useState('');
