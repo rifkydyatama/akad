@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import puppeteer from 'puppeteer-extra';
-import StealthPlugin from 'puppeteer-extra-plugin-stealth';
+
 import { cleanupSessions, createSession, dedupeInflight, getSession, updateSession } from './_session';
 import type { SiakadSession } from './_session';
 
@@ -84,7 +84,8 @@ type AllData = {
     dhe: DheItem[];
 };
 
-puppeteer.use(StealthPlugin());
+// Load stealth plugin dynamically at runtime (avoid bundler omitting submodules)
+// The plugin is imported inside the request handler before launching the browser.
 
 export async function POST(request: Request) {
     let nim = "";
@@ -134,6 +135,18 @@ export async function POST(request: Request) {
         const headless = process.env.PUPPETEER_HEADLESS
             ? process.env.PUPPETEER_HEADLESS !== "false"
             : process.env.NODE_ENV === "production";
+
+        // Dynamically import stealth plugin at runtime to avoid build-time bundling issues on Vercel
+        try {
+            const stealthMod = await import('puppeteer-extra-plugin-stealth');
+            const StealthPlugin = (stealthMod && (stealthMod.default || stealthMod));
+            if (typeof StealthPlugin === 'function') {
+                puppeteer.use(StealthPlugin());
+            }
+        } catch (err) {
+            // If it fails, continue without stealth but keep a warning for debugging
+            console.warn('Failed to load puppeteer-extra-plugin-stealth:', err);
+        }
 
                 browser = await puppeteer.launch({
             headless, // Production default: headless
