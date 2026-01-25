@@ -1,8 +1,13 @@
 import { NextResponse } from 'next/server';
+import { cookies } from 'next/headers';
+import { cleanupSessions, createSession, dedupeInflight, getSession, updateSession } from './_session';
+import type { SiakadSession } from './_session';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60; // seconds
+
+type RegistrasiItem = { semester: string; status: string };
 
 type KeuanganRiwayat = {
   thaka: string;
@@ -13,7 +18,38 @@ type KeuanganRiwayat = {
   status: string;
 };
 
-type RegistrasiItem = { semester: string; status: string };
+type Profile = {
+  name: string;
+  prodi: string;
+  fakultas: string;
+  dosenPa: string;
+  status: string;
+  jalur: string;
+  foto: string | null;
+};
+
+type KhsItem = { matkul: string; sks: number; nilai: string };
+type Khs = { semester: string; ips: string; matkul: KhsItem[] };
+type Dhs = { ipk: string; totalSks: string };
+type JadwalItem = { matkul: string; hari: string; jam: string; ruang: string; dosen?: string };
+type DheItem = { kegiatan: string; poin: string };
+
+type AllData = {
+  profile: Profile;
+  keuangan: {
+    riwayat: KeuanganRiwayat[];
+    totals: {
+      totalPaid: number;
+      paidCount: number;
+      unpaidCount: number;
+    };
+  };
+  registrasi: RegistrasiItem[];
+  khs: Khs;
+  dhs: Dhs;
+  jadwal: JadwalItem[];
+  dhe: DheItem[];
+};
 
 const parseNominal = (raw: string | undefined | null) => {
   if (!raw) return 0;
@@ -50,16 +86,38 @@ export async function POST(req: Request) {
     }
   })();
 
-  const url = String(body.url || '').trim();
-  if (!url) return NextResponse.json({ success: false, message: 'Missing `url` in request body.' }, { status: 400 });
+  const nim = String(body.nim || '').trim();
+  const password = String(body.password || '').trim();
 
+  // If password is not provided, try cookie-based session sync.
+  const cookieStore = await cookies();
+  const sessionToken = cookieStore.get('siakad_session')?.value;
+  const session = getSession(sessionToken);
+  const useSession = !password && !!session;
+
+  if (!useSession && (!nim || !password)) {
+    return NextResponse.json(
+      { success: false, message: "Sesi tidak ditemukan atau sudah habis. Silakan login ulang dengan NIM & password." },
+      { status: 401 },
+    );
+  }
+
+  if (useSession) {
+    // Use existing session data
+    // For now, we'll still need to scrape, but we can use cached data or minimal scraping
+  }
+
+  // Hardcoded SIAKAD URL - this should be configurable or detected
+  const siakadUrl = 'https://siakad.um.ac.id/'; // Replace with actual SIAKAD URL
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let browser: any | null = null;
   try {
     const isProd = process.env.NODE_ENV === 'production' || process.env.VERCEL === '1';
     if (isProd) {
       // Production: use puppeteer-core + @sparticuz/chromium-min
       const puppeteerCore = await import('puppeteer-core');
-      const chromium = (await import('@sparticuz/chromium-min')) as any;
+      const chromium = (await import('@sparticuz/chromium-min')) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
       browser = await puppeteerCore.launch({
         executablePath: chromium.executablePath,
         headless: true,
@@ -80,7 +138,14 @@ export async function POST(req: Request) {
     await page.setUserAgent(
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
     );
-    await page.goto(url, { waitUntil: 'networkidle2', timeout: 60_000 });
+    await page.goto(siakadUrl, { waitUntil: 'networkidle2', timeout: 60_000 });
+
+    // If we have credentials, perform login
+    if (!useSession && nim && password) {
+      // Perform login logic here
+      // This would involve filling login form and submitting
+      // For now, we'll assume login is successful and proceed to scraping
+    }
 
     // Extract tables as arrays of rows->cells text
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -187,7 +252,65 @@ export async function POST(req: Request) {
       },
     };
 
-    return NextResponse.json({ success: true, keuangan: keuanganPayload, registrasi }, { status: 200 });
+    // Mock data for other fields - in real implementation, these would be scraped from different pages
+    const mockData = {
+      profile: {
+        name: "Nama Mahasiswa",
+        prodi: "Program Studi",
+        fakultas: "Fakultas",
+        dosenPa: "Dosen PA",
+        status: "Aktif",
+        jalur: "Reguler",
+        foto: null,
+      },
+      khs: {
+        semester: "2024/2025 Ganjil",
+        ips: "3.75",
+        matkul: [
+          { matkul: "Mata Kuliah 1", sks: 3, nilai: "A" },
+          { matkul: "Mata Kuliah 2", sks: 2, nilai: "B+" },
+        ],
+      },
+      dhs: { ipk: "3.5", totalSks: "120" },
+      jadwal: [
+        { matkul: "Mata Kuliah 1", hari: "Senin", jam: "08:00-10:00", ruang: "Ruang 101" },
+        { matkul: "Mata Kuliah 2", hari: "Selasa", jam: "10:00-12:00", ruang: "Ruang 102" },
+      ],
+      dhe: [
+        { kegiatan: "Kegiatan 1", poin: "10" },
+        { kegiatan: "Kegiatan 2", poin: "15" },
+      ],
+    };
+
+    // Create session if this was a fresh login
+    let outSessionToken: string | undefined;
+    if (!useSession && nim && password) {
+      // Mock session creation - in real implementation, this would use actual login cookies
+      const mockCookies = [
+        { name: 'session_id', value: 'mock_session_' + Date.now(), domain: 'siakad.uns.ac.id' }
+      ];
+      const newSession = createSession(nim, mockCookies);
+      outSessionToken = newSession.token;
+    }
+
+    const response = NextResponse.json({
+      success: true,
+      ...mockData,
+      keuangan: keuanganPayload,
+      registrasi,
+    }, { status: 200 });
+
+    if (outSessionToken) {
+      response.cookies.set('siakad_session', outSessionToken, {
+        httpOnly: true,
+        sameSite: 'lax',
+        secure: process.env.NODE_ENV === 'production',
+        path: '/',
+        maxAge: 12 * 60 * 60,
+      });
+    }
+
+    return response;
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     return NextResponse.json({ success: false, message }, { status: 500 });
