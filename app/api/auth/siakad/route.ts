@@ -70,14 +70,25 @@ export async function POST(request: Request) {
             }
 
             const allData: any = {
-                profile: { name: "Mahasiswa", prodi: "-", status: "-", jalur: "KIPK" },
-                keuangan: { riwayat: [], totals: { ukt: 0 } },
+                profile: { nim: '-', name: "Mahasiswa", prodi: "-", fakultas: '-', dosenPa: '-', status: "-", jalur: "-", angkatan: "-" },
+                dashboard: { term: '', paymentStatus: '', sks: 0, ip: '0.00' },
+                keuangan: { master: {}, riwayat: [], totals: { ukt: 0 } },
                 registrasi: [],
-                khs: { ips: "0.00" },
+                khs: { ips: "0.00", matkul: [] },
                 dhs: { ipk: "0.00", totalSks: "0" },
                 jadwal: [],
                 dhe: []
             };
+
+            // Helpers
+            const parseMoney = (raw: string) => {
+                if (!raw) return 0;
+                const first = String(raw).split(',')[0];
+                const digits = first.replace(/\./g, '').replace(/[^0-9-]/g, '');
+                const n = parseInt(digits || '0', 10);
+                return Number.isFinite(n) ? n : 0;
+            };
+            const fmtRp = (n:number) => `Rp ${new Intl.NumberFormat('id-ID').format(n)}`;
 
             const scrapeFrames = async (url: string, fn: any) => {
                 try {
@@ -92,26 +103,78 @@ export async function POST(request: Request) {
 
             // ITEM 1: DASHBOARD
             allData.profile = await scrapeFrames('https://siakad.um.ac.id/dashboard/', () => {
-                const b = document.body.innerText;
-                const get = (k: string) => (b.match(new RegExp(`${k}\\s*[:]?\\s*([^\\n]+)`, 'i')) || [])[1]?.trim().replace(/^[:\-\s]+/, '') || "-";
-                return { name: document.querySelector('.user-name span')?.textContent?.trim() || get('Nama'), prodi: get('Program Studi'), status: get('Status'), jalur: get('Jalur Masuk') };
+                // Extract detailed profile and dashboard tiles
+                const out:any = { nim: '-', name: (document.querySelector('.user-name span')?.textContent||'').trim() || '-', prodi: '-', fakultas: '-', dosenPa: '-', status: '-', jalur: '-', angkatan: '-' };
+                try {
+                    // NIM: try top corner, or labeled field
+                    const nimEl = document.querySelector('.user-profile .nim, .user-name .nim, .nav .nim') || document.querySelector('body');
+                    const bodyText = (document.body.innerText || '');
+                    const nimMatch = bodyText.match(/NIM\s*[:]?\s*(\d{5,})/i) || bodyText.match(/(\d{9,})/);
+                    if (nimMatch) out.nim = nimMatch[1];
+
+                    // Prodi/Fakultas/Dosen PA/Ajax
+                    const get = (k:string) => (bodyText.match(new RegExp(`${k}\s*[:]?\s*([^\n]+)`, 'i')) || [])[1]?.trim().replace(/^[:\-\s]+/, '') || '-';
+                    out.prodi = get('Program Studi') || out.prodi;
+                    out.fakultas = get('Fakultas') || out.fakultas;
+                    out.dosenPa = get('Dosen PA') || out.dosenPa;
+                    out.status = get('Status') || out.status;
+                    out.jalur = get('Jalur Masuk') || out.jalur;
+                    out.angkatan = get('Angkatan') || out.angkatan;
+
+                    // Tiles: detect common labels for SKS, IP, Payment status
+                    const tileText = Array.from(document.querySelectorAll('div')).map(d => (d.textContent||'').trim()).join('\n');
+                    const sksMatch = tileText.match(/Jumlah\s+SKS\s*(?:\w+\s*)?(\d{1,3})/i);
+                    if (sksMatch) out.sks = Number(sksMatch[1]);
+                    const ipMatch = tileText.match(/IP\s*(?:Semester)?\s*[:]?\s*(\d[\.,]\d{2})/i);
+                    if (ipMatch) out.ip = ipMatch[1].replace(',', '.');
+                    const payMatch = tileText.match(/Anda\s+sudah\s+membayar|Belum\s+Lunas|Lunas/i);
+                    if (payMatch) out.paymentStatus = payMatch[0];
+                } catch {
+                    // ignore
+                }
+                return out;
             });
 
             // ITEM 2: KEUANGAN (FIX 4.5 JT)
             const keu = await scrapeFrames('https://siakad.um.ac.id/riwayat-keuangan/', () => {
                 const res: any[] = [];
+                // Try to parse master payment row headings first
+                const tables = Array.from(document.querySelectorAll('table'));
+                const master: any = {};
+                for (const t of tables) {
+                    const header = (Array.from(t.querySelectorAll('th')).map(h => h.innerText.trim().toLowerCase()).join(' '));
+                    if (header.includes('spp') && header.includes('hotma')) {
+                        // master row may be in first tbody row
+                        const firstRow = t.querySelector('tbody tr');
+                        if (firstRow) {
+                            const cols = Array.from(firstRow.querySelectorAll('td')).map(td => td.innerText.trim());
+                            const keys = Array.from(t.querySelectorAll('th')).map(h => h.innerText.trim());
+                            keys.forEach((k,i) => master[k] = cols[i] || '0');
+                        }
+                    }
+                }
+
                 document.querySelectorAll('tr').forEach(row => {
                     const c = Array.from(row.querySelectorAll('td')).map(td => td.innerText.trim());
                     const thaka = c.find(t => /^\d{5}$/.test(t));
                     if (thaka) {
-                        const money = c.find(t => t.includes('.') && t.includes(',') && !t.includes('/')) || "0";
-                        const tgl = c.find(t => /\d{2}\/\d{2}\/\d{4}/.test(t));
-                        const nominal = parseInt(money.split(',')[0].replace(/\D/g, '')) || 0;
-                        res.push({ thaka, nominal: `Rp ${new Intl.NumberFormat('id-ID').format(nominal)}`, spp: nominal, status: nominal === 0 && !!tgl ? "Lunas (KIP-K)" : (tgl ? "Lunas" : "Belum Bayar") });
+                        // Find typical columns relative to thaka
+                        const thakaIdx = c.findIndex(t => /^\d{5}$/.test(t));
+                        const sppStr = c[thakaIdx+1] || '0';
+                        const hotmaStr = c[thakaIdx+2] || '0';
+                        const tgl = c.find(t => /\d{2}\/\d{2}\/\d{4}/.test(t)) || null;
+                        const bank = c.find(t => /bank/i.test(t)) || null;
+                        const spp = parseMoney(sppStr);
+                        res.push({ thaka, sppFormatted: fmtRp(spp), spp, hotma: parseMoney(hotmaStr), tglBayar: tgl, bank, raw: c });
                     }
                 });
-                return res;
+                return { master, rows: res };
             });
+            if (keu) {
+                allData.keuangan.riwayat = (keu.rows || []).reverse();
+                allData.keuangan.master = keu.master || {};
+                allData.keuangan.totals.ukt = (keu.rows || []).reduce((a:any, b:any) => a + (b.spp || 0), 0);
+            }
             if (keu) {
                 allData.keuangan.riwayat = keu.reverse();
                 allData.keuangan.totals.ukt = keu.reduce((a:any, b:any) => a + b.spp, 0);
@@ -130,11 +193,26 @@ export async function POST(request: Request) {
             });
 
             // ITEM 4 & 7: KHS & DHS (FIX FALLBACK 3.96)
-            const ips = await scrapeFrames('https://siakad.um.ac.id/khs/', () => {
-                const m = document.body.innerText.match(/\bIPS\b\s*[:=]?\s*(\d+[\.,]\d{2})/i);
-                return m ? m[1].replace(',', '.') : "0.00";
+            const khsIPS = await scrapeFrames('https://siakad.um.ac.id/khs/', () => {
+                const text = document.body.innerText || '';
+                const m = text.match(/\bIPS\b\s*[:=]?\s*(\d+[\.,]\d{2})/i);
+                // try to also extract matkul table
+                const tables = Array.from(document.querySelectorAll('table'));
+                for (const t of tables) {
+                    const headers = Array.from(t.querySelectorAll('th')).map(h => h.innerText.trim().toLowerCase()).join(' ');
+                    if ((headers.includes('nama') || headers.includes('matakul')) && headers.includes('sks')) {
+                        const rows = Array.from(t.querySelectorAll('tr')).slice(1);
+                        const matkul = rows.map(row => {
+                            const cols = Array.from(row.querySelectorAll('td')).map(td => td.innerText.trim());
+                            return { code: cols[0] || '', matkul: cols[1] || '', sks: parseInt(cols[2]||'0')||0, nilai: cols[cols.length-2]||'', dosen: cols[cols.length-1]||'' };
+                        }).filter((x:any)=>x.matkul);
+                        return { ips: m ? m[1].replace(',', '.') : '0.00', matkul };
+                    }
+                }
+                return { ips: m ? m[1].replace(',', '.') : '0.00', matkul: [] };
             });
-            allData.khs.ips = ips || "0.00";
+            allData.khs.ips = khsIPS?.ips || "0.00";
+            allData.khs.matkul = khsIPS?.matkul || [];
 
             const dhs = await scrapeFrames('https://siakad.um.ac.id/dhs/', () => {
                 const b = document.body.innerText;
