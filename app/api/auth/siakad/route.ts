@@ -224,39 +224,54 @@ export async function POST(request: Request) {
                 allData.keuangan.totals.ukt = keuData.reduce((a:any, b:any) => a + b.spp, 0);
             }
 
-            // C. JADWAL (Hanya Matkul & Dosen)
+            // C. JADWAL (detect columns + fallback heuristics)
             console.log("📍 Scraping Jadwal...");
             await gotoPage('https://siakad.um.ac.id/krs/');
             const jadwalData = await scrape(() => {
-                const res: any[] = [];
+                // Try to find a headered table first
+                const tables = Array.from(document.querySelectorAll('table'));
+                for (const t of tables) {
+                    try {
+                        const ths = Array.from(t.querySelectorAll('th')).map(h => h.innerText.trim().toLowerCase());
+                        const rows = Array.from(t.querySelectorAll('tbody tr'));
+                        if (!ths.length && rows.length === 0) continue;
+
+                        const idx = (name: string) => ths.findIndex(h => h.includes(name));
+                        const iKode = idx('kode');
+                        const iNama = idx('nama') >= 0 ? idx('nama') : idx('mata') >= 0 ? idx('mata') : idx('mk');
+                        const iDosen = idx('dosen');
+                        const iHari = idx('hari');
+                        const iJam = idx('jam');
+                        const iRuang = idx('ruang');
+
+                        if (iNama >= 0 || iKode >= 0) {
+                            return rows.map(r => {
+                                const cols = Array.from(r.querySelectorAll('td')).map(td => td.innerText.trim());
+                                const code = (iKode >= 0 ? cols[iKode] : cols[0]) || '';
+                                const name = (iNama >= 0 ? cols[iNama] : cols[1]) || '';
+                                const dosen = (iDosen >= 0 ? cols[iDosen] : (cols[cols.length-1] || '-')) || '-';
+                                const hari = iHari >= 0 ? (cols[iHari] || '-') : (cols.find(c => /^(Senin|Selasa|Rabu|Kamis|Jumat|Sabtu|Minggu)$/i.test(c)) || '-');
+                                const jam = iJam >= 0 ? (cols[iJam] || '-') : (cols.find(c => /\d{2}:\d{2}/.test(c)) || '-');
+                                const ruang = iRuang >= 0 ? (cols[iRuang] || '-') : (cols.find(c => /ruang|lab|gedung|rm|room/i.test(c)) || '-');
+                                return { code, matkul: name, dosen, hari, jam, ruang };
+                            }).filter(x => x.matkul);
+                        }
+                    } catch {}
+                }
+
+                // fallback: heuristics across all trs
                 const rows = Array.from(document.querySelectorAll('tr'));
-                
+                const out: any[] = [];
                 rows.forEach(row => {
-                    const cols = Array.from(row.querySelectorAll('td')).map(td => td.innerText.trim());
-                    if (cols.length < 3) return;
-
-                    // Dosen: Ada titik/koma gelar
-                    const dosen = cols.find(t => (t.includes('.') || t.includes(',')) && t.length > 5 && !t.match(/\d{2}:\d{2}/));
-                    
-                    // Matkul: Teks panjang sisa
-                    const matkul = cols.find(t => 
-                        t.length > 5 && 
-                        t !== dosen &&
-                        !/^(Senin|Selasa|Rabu|Kamis|Jumat|Sabtu)$/i.test(t) &&
-                        !/\d{2}:\d{2}/.test(t) &&
-                        !/Gedung|Ruang|SKS|Total/i.test(t) &&
-                        !/^\d+$/.test(t)
-                    );
-
-                    if (matkul) {
-                        res.push({
-                            matkul: matkul,
-                            dosen: dosen || "-",
-                            hari: "-", jam: "-", ruang: "-" // Request User: Kosongkan
-                        });
-                    }
+                    const cols = Array.from(row.querySelectorAll('td')).map(td => td.innerText.trim()).filter(Boolean);
+                    if (cols.length < 2) return;
+                    const jam = cols.find(c => /\d{2}:\d{2}/.test(c)) || '-';
+                    const hari = cols.find(c => /^(Senin|Selasa|Rabu|Kamis|Jumat|Sabtu|Minggu)$/i.test(c)) || '-';
+                    const dosen = cols.find(c => (c.includes('.') || c.includes(',')) && c.length > 5) || '-';
+                    const matkul = cols.find(c => c.length > 6 && c !== dosen && !/\d/.test(c)) || cols[0] || '-';
+                    out.push({ code: '', matkul, dosen, hari, jam, ruang: '-' });
                 });
-                return res;
+                return out;
             });
             if (jadwalData) allData.jadwal = jadwalData;
 
