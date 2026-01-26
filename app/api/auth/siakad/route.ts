@@ -183,65 +183,124 @@ export async function POST(request: Request) {
                 }
             }
 
-            // B. KEUANGAN (Logic Anti-450Juta)
+            // B. KEUANGAN (Master Pembayaran + Riwayat)
             console.log("📍 Scraping Keuangan...");
             await gotoPage('https://siakad.um.ac.id/riwayat-keuangan/');
-            const keuData = await scrape(() => {
-                const res: any[] = [];
-                const rows = Array.from(document.querySelectorAll('tr'));
-                
-                rows.forEach(row => {
-                    const txt = row.innerText;
-                    if (/\d{5}/.test(txt)) { // Baris yang punya 20251 dll
-                        const cols = Array.from(row.querySelectorAll('td')).map(td => td.innerText.trim());
-                        
-                        const thaka = cols.find(c => /^\d{5}$/.test(c));
-                        const tgl = cols.find(c => /\d{2}\/\d{2}\/\d{4}/.test(c));
-                        // Cari yang format uang
-                        const moneyRaw = cols.find(c => c !== thaka && (c.includes('.') || c.includes(',')) && !c.includes('/')) || "0";
+            const keuPage = await scrape(() => {
+                const parseMoney = (s: string | undefined | null) => {
+                    if (!s) return { value: 0, raw: '0' };
+                    const txt = String(s).trim();
+                    const main = txt.split(',')[0];
+                    const digits = main.replace(/\D/g, '') || '0';
+                    return { value: parseInt(digits, 10) || 0, raw: txt };
+                };
 
-                        if (thaka) {
-                            // FIX UANG: Split koma, ambil depannya saja -> 4.500.000,00 -> 4.500.000
-                            const mainPart = moneyRaw.split(',')[0];
-                            const nominal = parseInt(mainPart.replace(/\D/g, '')) || 0;
+                const result: any = { master: {}, riwayat: [] };
 
-                            const isLunas = !!tgl;
-                            let status = isLunas ? "Lunas" : "Belum Bayar";
-                            if (nominal === 0 && isLunas) status = "Lunas (KIP-K)";
-
-                            const th = thaka.slice(0, 4);
-                            const kd = thaka.slice(4);
-                            const sm = kd==='1'?'Ganjil':kd==='2'?'Genap':'Antara';
-
-                            res.push({
-                                thaka,
-                                semester: `Semester ${sm} ${th}/${parseInt(th)+1}`,
-                                nominal: `Rp ${new Intl.NumberFormat('id-ID').format(nominal)}`,
-                                spp: nominal,
-                                status: status,
-                                tglBayar: tgl || "-"
-                            });
+                // Master Pembayaran: look for a table with headers including SPP and HOTMA
+                const tables = Array.from(document.querySelectorAll('table'));
+                for (const t of tables) {
+                    try {
+                        const headers = Array.from(t.querySelectorAll('th')).map(h => h.innerText.trim().toLowerCase());
+                        if (headers.some(h => h.includes('spp')) && headers.some(h => h.includes('hotma'))) {
+                            const row = t.querySelector('tbody tr') || t.querySelector('tr');
+                            if (row) {
+                                const cols = Array.from(row.querySelectorAll('td')).map(td => td.innerText.trim());
+                                const map: Record<string, any> = {};
+                                // Map by header position
+                                headers.forEach((h, i) => {
+                                    const key = h.includes('spp') ? 'spp' : h.includes('hotma') ? 'hotma' : h.includes('spsa') ? 'spsa' : h.includes('kpmb') ? 'kpmb' : h.includes('bpp') ? 'bpp' : h.includes('lain') ? 'lain' : `col${i}`;
+                                    map[key] = parseMoney(cols[i]);
+                                });
+                                result.master = {
+                                    spp: map.spp?.value || 0,
+                                    hotma: map.hotma?.value || 0,
+                                    spsa: map.spsa?.value || 0,
+                                    kpmb: map.kpmb?.value || 0,
+                                    bpp: map.bpp?.value || 0,
+                                    lain: map.lain?.value || 0,
+                                    total: (map.spp?.value || 0) + (map.hotma?.value || 0) + (map.spsa?.value || 0) + (map.kpmb?.value || 0) + (map.bpp?.value || 0) + (map.lain?.value || 0),
+                                    raw: Object.fromEntries(Object.entries(map).map(([k, v]) => [k, (v && (v.raw || '0')) || '0']))
+                                };
+                                break;
+                            }
                         }
-                    }
-                });
-                return res.reverse();
+                    } catch {}
+                }
+
+                // Riwayat Keuangan: find table with THAKA header
+                for (const t of tables) {
+                    try {
+                        const headers = Array.from(t.querySelectorAll('th')).map(h => h.innerText.trim().toLowerCase());
+                        if (headers.some(h => h.includes('thaka'))) {
+                            const rows = Array.from(t.querySelectorAll('tbody tr'));
+                            const out: any[] = [];
+                            for (const r of rows) {
+                                const cols = Array.from(r.querySelectorAll('td')).map(td => td.innerText.trim());
+                                if (cols.length === 0) continue;
+                                // detect total row (colspan)
+                                if (r.querySelector('th') && /total/i.test(r.querySelector('th')!.textContent || '')) continue;
+
+                                const getByHeader = (name: string) => {
+                                    const idx = headers.findIndex(h => h.includes(name));
+                                    return idx >= 0 ? cols[idx] : undefined;
+                                };
+
+                                const thaka = getByHeader('thaka') || cols[1] || '';
+                                const sppRaw = getByHeader('spp') || getByHeader('spp (rp)') || cols[2] || '0';
+                                const hotmaRaw = getByHeader('hotma') || cols[3] || '0';
+                                const spsaRaw = getByHeader('spsa') || cols[4] || '0';
+                                const kpmbRaw = getByHeader('kpmb') || cols[5] || '0';
+                                const bppRaw = getByHeader('bpp') || cols[6] || '0';
+                                const kknRaw = getByHeader('kkn') || cols[7] || '0';
+                                const pplRaw = getByHeader('ppl') || cols[8] || '0';
+                                const lainRaw = getByHeader('lain') || cols[9] || '0';
+                                const tgl = getByHeader('tgl') || getByHeader('tgl bayar') || cols[10] || '';
+                                const bank = getByHeader('bank') || cols[11] || '';
+
+                                const spp = parseMoney(sppRaw);
+                                const hotma = parseMoney(hotmaRaw);
+                                const spsa = parseMoney(spsaRaw);
+                                const kpmb = parseMoney(kpmbRaw);
+                                const bpp = parseMoney(bppRaw);
+                                const kkn = parseMoney(kknRaw);
+                                const ppl = parseMoney(pplRaw);
+                                const lain = parseMoney(lainRaw);
+
+                                out.push({
+                                    thaka: String(thaka).trim(),
+                                    spp: spp.value,
+                                    hotma: hotma.value,
+                                    spsa: spsa.value,
+                                    kpmb: kpmb.value,
+                                    bpp: bpp.value,
+                                    kkn: kkn.value,
+                                    ppl: ppl.value,
+                                    lain: lain.value,
+                                    total: spp.value + hotma.value + spsa.value + kpmb.value + bpp.value + kkn.value + ppl.value + lain.value,
+                                    tglBayar: String(tgl).trim() || '-',
+                                    bank: String(bank).trim() || '-',
+                                    raw: { spp: spp.raw, hotma: hotma.raw, spsa: spsa.raw, kpmb: kpmb.raw, bpp: bpp.raw, kkn: kkn.raw, ppl: ppl.raw, lain: lain.raw }
+                                });
+                            }
+                            result.riwayat = out.reverse();
+                            break;
+                        }
+                    } catch {}
+                }
+
+                return result;
             });
-            if (keuData) {
-                allData.keuangan.riwayat = keuData;
-                const uktTotal = keuData.reduce((a:any, b:any) => a + (Number(b.spp) || 0), 0);
-                allData.keuangan.totals.ukt = uktTotal;
 
-                // Build totals summary
-                const paidCount = keuData.filter((r:any) => (r.status || '').toLowerCase().includes('lunas')).length;
-                const totalPaid = keuData.filter((r:any) => (r.status || '').toLowerCase().includes('lunas')).reduce((a:any,b:any)=>a + (Number(b.spp)||0),0);
-                const unpaidCount = Math.max(keuData.length - paidCount, 0);
-                const activeThaka = (keuData[0] && keuData[0].thaka) || null;
-
+            if (keuPage) {
+                allData.keuangan.master = keuPage.master || { spp: 0, hotma: 0, spsa: 0, kpmb: 0, bpp: 0, lain: 0, total: 0 };
+                allData.keuangan.riwayat = keuPage.riwayat || [];
+                const uktTotal = (allData.keuangan.riwayat || []).reduce((a:any,b:any)=>a + (Number(b.spp)||0), 0) || (allData.keuangan.master?.spp ?? 0);
+                const paidCount = (allData.keuangan.riwayat || []).filter((r:any)=> r.tglBayar && r.tglBayar !== '-').length;
+                const totalPaid = (allData.keuangan.riwayat || []).filter((r:any)=> r.tglBayar && r.tglBayar !== '-').reduce((a:any,b:any)=>a + (Number(b.spp)||0),0);
+                const unpaidCount = Math.max((allData.keuangan.riwayat || []).length - paidCount, 0);
+                const activeThaka = allData.keuangan.riwayat[0]?.thaka || null;
                 allData.keuangan.totals = { ukt: uktTotal, totalPaid, paidCount, unpaidCount, activeThaka };
-
-                // Build master (best-effort): prefer explicit fields if present, otherwise place ukt into spp
-                const master: any = { spp: uktTotal, hotma: 0, spsa: 0, kpmb: 0, bpp: 0, lain: 0, total: uktTotal };
-                allData.keuangan.master = master;
             }
 
             // C. JADWAL (detect columns + fallback heuristics)
@@ -295,67 +354,79 @@ export async function POST(request: Request) {
             });
             if (jadwalData) allData.jadwal = jadwalData;
 
-            // D. KHS (IPS + Mata Kuliah)
+            // D. KHS (Hasil Studi per semester)
             console.log("📍 Scraping KHS...");
             await gotoPage('https://siakad.um.ac.id/khs/');
             const khsPage = await scrape(() => {
-                const text = document.body.innerText;
-                const ipsMatch = text.match(/IPS\s*[:=]?\s*(\d+[\.,]\d{2})/i);
-                const ips = ipsMatch ? ipsMatch[1].replace(',', '.') : null;
+                const text = document.body.innerText || '';
 
-                // Try to find a semester label on the page
+                // Semester: often in H3 like "Hasil Studi Periode Gasal 2025/2026"
                 let semester: string | null = null;
-                const possible = Array.from(document.querySelectorAll('h1,h2,h3,div,span')) as HTMLElement[];
-                for (const el of possible) {
-                    const t = (el.textContent || '').trim();
-                    if (/semester/i.test(t) && t.length < 80) { semester = t; break; }
-                }
+                const h3 = document.querySelector('h3')?.textContent || '';
+                const m = h3.match(/(Gasal|Genap|Antara)\s*\d{4}\/\d{4}/i);
+                if (m) semester = m[0].trim();
                 if (!semester) {
-                    const m2 = text.match(/Semester\s*[:\-\s]*([^\n\r]+)/i);
-                    if (m2) semester = m2[1].trim();
+                    const m2 = text.match(/(Gasal|Genap|Antara)\s*\d{4}\/\d{4}/i);
+                    if (m2) semester = m2[0].trim();
                 }
 
-                // Parse table rows for mata kuliah
+                // Small stat cards: look for strong elements containing SKS and IP
+                const strongs = Array.from(document.querySelectorAll('strong')).map(s => (s.textContent || '').trim());
+                let totalSks: number | null = null;
+                let ips: string | null = null;
+                for (const s of strongs) {
+                    if (/^\d+$/.test(s) && !totalSks) totalSks = Number(s);
+                    if (/^\d+[\.,]\d+$/.test(s) && !ips) ips = s.replace(',', '.');
+                }
+
+                // Table with mata kuliah: map headers to indices
                 const tables = Array.from(document.querySelectorAll('table'));
                 let matkul: any[] = [];
                 for (const t of tables) {
                     try {
                         const ths = Array.from(t.querySelectorAll('th')).map(h => h.innerText.trim().toLowerCase());
-                        const rows = Array.from(t.querySelectorAll('tbody tr, tr'));
-                        const hasName = ths.some(h => h.includes('mata') || h.includes('matkul') || h.includes('nama')) || ths.length === 0;
-                        if (!hasName || rows.length === 0) continue;
+                        if (!ths.length) continue;
+                        const rows = Array.from(t.querySelectorAll('tbody tr'));
+                        if (!rows.length) continue;
 
-                        matkul = rows.map(r => {
-                            const cols = Array.from(r.querySelectorAll('td')).map(td => td.innerText.trim());
-                            if (!cols || cols.length === 0) return null;
-
-                            // Heuristics: nilai often in last column; sks is a short number column
-                            let nilai = '-';
-                            let sks = 0;
-
-                            // try find sks as a short numeric column
-                            for (const c of cols) {
-                                if (/^\d+$/.test(c) && Number(c) > 0 && Number(c) < 10) { sks = parseInt(c); break; }
+                        const idx = (names: string[]) => {
+                            for (const n of names) {
+                                const i = ths.findIndex(h => h.includes(n));
+                                if (i >= 0) return i;
                             }
+                            return -1;
+                        };
 
-                            const last = cols[cols.length - 1] || '';
-                            if (last && /[A-F]|\b[0-9]{1,3}\b|T|P/i.test(last)) nilai = last;
+                        const iKode = idx(['kode']);
+                        const iNama = idx(['nama mata', 'nama', 'mata', 'matakuliah']);
+                        const iSks = idx(['sks']);
+                        const iKelas = idx(['kelas', 'kelas-offr']);
+                        const iDosen = idx(['dosen']);
+                        const iNilai = idx(['n.h', 'nilai', 'n.h.']);
 
-                            // name: pick the longest non-numeric cell
-                            const name = cols.find(c => c.length > 6 && !/^\d+$/.test(c)) || cols[0] || '-';
-                            return { matkul: name, sks, nilai };
-                        }).filter(Boolean);
-
-                        if (matkul.length) break;
+                        if (iNama >= 0) {
+                            matkul = rows.map(r => {
+                                const cols = Array.from(r.querySelectorAll('td')).map(td => td.innerText.trim());
+                                if (!cols || cols.length === 0) return null;
+                                const code = iKode >= 0 ? (cols[iKode] || '') : (cols[1] || '');
+                                const name = iNama >= 0 ? (cols[iNama] || '') : (cols[2] || '');
+                                const sks = iSks >= 0 ? Number(cols[iSks]) || 0 : (Number(cols[3]) || 0);
+                                const kelas = iKelas >= 0 ? (cols[iKelas] || '-') : (cols[4] || '-');
+                                const dosen = iDosen >= 0 ? (cols[iDosen] || '-') : (cols[5] || '-');
+                                const nilai = iNilai >= 0 ? (cols[iNilai] || '-') : (cols[6] || '-');
+                                return { code, matkul: name, sks, kelas, dosen, nilai };
+                            }).filter(Boolean);
+                            if (matkul.length) break;
+                        }
                     } catch {}
                 }
 
-                return { ips, semester, matkul };
+                return { semester, ips, totalSks, matkul };
             });
 
-            allData.khs.ips = khsPage?.ips || "0.00";
+            allData.khs.ips = khsPage?.ips || allData.khs.ips || "0.00";
             allData.khs.semester = khsPage?.semester || allData.khs.semester || "-";
-            allData.khs.matkul = Array.isArray(khsPage?.matkul) ? khsPage!.matkul : [];
+            allData.khs.matkul = Array.isArray(khsPage?.matkul) ? khsPage!.matkul.map((m:any)=>({ matkul: m.matkul, sks: m.sks, nilai: m.nilai, code: m.code, dosen: m.dosen })) : [];
 
             // E. DHS (IPK)
             console.log("📍 Scraping DHS...");
@@ -378,19 +449,38 @@ export async function POST(request: Request) {
             console.log("📍 Scraping Registrasi...");
             await gotoPage('https://siakad.um.ac.id/riwayat-registrasi/');
             const regData = await scrape(() => {
-                const res: any[] = [];
-                document.querySelectorAll('tr').forEach(r => {
-                    const c = Array.from(r.querySelectorAll('td')).map(td => td.innerText.trim());
-                    const sem = c.find(t => /^\d{5}$/.test(t));
-                    const stat = c.find(t => /Aktif|Cuti|Lulus/i.test(t));
-                    
-                    if (sem) {
-                        const th = sem.slice(0,4), kd = sem.slice(4);
-                        const sm = kd==='1'?'Ganjil':kd==='2'?'Genap':'Antara';
-                        res.push({ semester: `Semester ${sm} ${th}/${parseInt(th)+1}`, status: stat || "Aktif" });
-                    }
-                });
-                return res;
+                const out: any[] = [];
+                const rows = Array.from(document.querySelectorAll('table tbody tr'));
+                if (rows.length === 0) {
+                    // fallback to any trs
+                    rows.push(...Array.from(document.querySelectorAll('tr')));
+                }
+                for (const r of rows) {
+                    try {
+                        const cols = Array.from(r.querySelectorAll('td')).map(td => td.innerText.trim()).filter(Boolean);
+                        if (!cols || cols.length === 0) continue;
+
+                        // semester cell can be human readable like "Gasal 2025/2026" or numeric code like 20251
+                        const semHuman = cols.find(c => /(Gasal|Genap|Antara)\s*\d{4}\/\d{4}/i.test(c));
+                        const semCode = cols.find(c => /^\d{5}$/.test(c));
+                        let semester = '-';
+                        if (semHuman) semester = semHuman;
+                        else if (semCode) {
+                            const th = semCode.slice(0,4), kd = semCode.slice(4);
+                            const sm = kd==='1'?'Gasal':kd==='2'?'Genap':'Antara';
+                            semester = `${sm} ${th}/${parseInt(th)+1}`;
+                        } else {
+                            semester = cols[0] || '-';
+                        }
+
+                        const status = cols.find(c => /Aktif|Cuti|Lulus|Nonaktif|Tidak Aktif/i.test(c)) || (r.querySelector('label')?.textContent?.trim()) || '-';
+                        const tgl = cols.find(c => /\d{1,2}[-\/]\d{1,2}[-\/]\d{2,4}/.test(c)) || '-';
+                        const keterangan = cols.find(c => c !== semester && c !== status && c !== tgl) || '-';
+
+                        out.push({ semester: semester.trim(), status: status.trim(), tglRegistrasi: String(tgl).trim() || '-', keterangan: String(keterangan).trim() || '-', active: /Aktif/i.test(String(status)) });
+                    } catch {}
+                }
+                return out;
             });
             if (regData) allData.registrasi = regData;
 
