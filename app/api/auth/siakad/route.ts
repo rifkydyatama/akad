@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
+/* eslint-disable @typescript-eslint/no-explicit-any */
+/* eslint-disable @typescript-eslint/no-unused-vars */
 import { cleanupSessions, createSession, dedupeInflight, getSession, updateSession } from './_session';
 import chromium from '@sparticuz/chromium';
 import puppeteerCore from 'puppeteer-core';
@@ -14,6 +16,7 @@ type Profile = { name: string; prodi: string; fakultas: string; dosenPa: string;
 type AllData = {
     profile: Profile;
     keuangan: { riwayat: any[]; totals: { ukt: number } };
+    dashboard?: { term?: string; paymentStatus?: string; sks?: number; ip?: string };
     jadwal: any[];
     khs: { ips: string; semester: string; matkul: any[] };
     dhs: { ipk: string; totalSks: string };
@@ -49,10 +52,10 @@ export async function POST(request: Request) {
             // 1. SETUP BROWSER
             if (process.env.NODE_ENV === 'production') {
                 browser = await puppeteerCore.launch({
-                    args: [...chromium.args, '--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--single-process'],
-                    defaultViewport: chromium.defaultViewport,
-                    executablePath: await chromium.executablePath(),
-                    headless: chromium.headless,
+                    args: [...((chromium as any).args || []), '--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--single-process'],
+                    defaultViewport: { width: 1366, height: 768 },
+                    executablePath: await (chromium as any).executablePath(),
+                    headless: true,
                 });
             } else {
                 const { default: puppeteer } = await import('puppeteer-extra');
@@ -85,7 +88,7 @@ export async function POST(request: Request) {
                 const frames = [page.mainFrame(), ...page.frames()];
                 for (const f of frames) {
                     try {
-                        const res = await f.evaluate(fn);
+                        const res = await (f as any).evaluate(fn);
                         if (res) return res;
                     } catch {}
                 }
@@ -95,7 +98,7 @@ export async function POST(request: Request) {
             // --- 2. LOGIN (PERBAIKAN UTAMA) ---
             await gotoPage('https://siakad.um.ac.id/');
             
-            const isLoginPage = await page.evaluate(() => !!document.querySelector('input[type="password"]'));
+            const isLoginPage = await (page as any).evaluate(() => !!document.querySelector('input[type="password"]'));
             
             if (isLoginPage) {
                 if (password) {
@@ -103,7 +106,7 @@ export async function POST(request: Request) {
                     await page.type('input[type="password"]', password);
                     
                     // FIX: Coba klik tombol login dengan berbagai cara
-                    const clicked = await page.evaluate(() => {
+                    const clicked = await (page as any).evaluate(() => {
                         const btn = document.querySelector('button[type="submit"]') || 
                                     document.querySelector('input[type="submit"]') ||
                                     document.querySelector('button.btn-primary'); // Tambahan selector
@@ -124,7 +127,7 @@ export async function POST(request: Request) {
             }
 
             // Validasi Login
-            const stillLogin = await page.evaluate(() => !!document.querySelector('input[type="password"]'));
+            const stillLogin = await (page as any).evaluate(() => !!document.querySelector('input[type="password"]'));
             if (stillLogin) throw new Error("Gagal Login. Cek NIM/Password.");
 
             // --- 3. SCRAPING (LOGIKA EKSPLISIT) ---
@@ -320,12 +323,84 @@ export async function POST(request: Request) {
             if (dheData) allData.dhe = dheData;
 
             // --- 4. SELESAI ---
+            // Merge jadwal with existing session (preserve manual edits)
+            const normalizeKey = (v: string | undefined | null) => String(v || '').toLowerCase().replace(/[\s\-_.()\[\]]+/g, ' ').replace(/\s+/g, ' ').trim();
+
+            const semesterActive = (allData.registrasi && (allData.registrasi as any[]).find(r => (r as any).active)) ? ((allData.registrasi as any[]).find(r => (r as any).active) as any).semester : (allData.registrasi && (allData.registrasi as any[])[0]?.semester) || undefined;
+
+            const scheduleChanges: any[] = [];
+            let finalJadwal: any[] = (allData.jadwal || []).map((j:any) => ({ ...j }));
+
+            if (session && session.semester && semesterActive && session.semester === semesterActive && Array.isArray((session as any).jadwal)) {
+                finalJadwal = JSON.parse(JSON.stringify((session as any).jadwal || []));
+                const idxMap = new Map(finalJadwal.map((item:any, i:number) => [normalizeKey(item.code || item.matkul || ''), i]));
+                for (const n of (allData.jadwal || [])) {
+                    const key = normalizeKey(n.code || n.matkul || '');
+                    const idx = idxMap.get(key);
+                    if (typeof idx === 'number') {
+                        const before = { hari: finalJadwal[idx].hari, jam: finalJadwal[idx].jam, ruang: finalJadwal[idx].ruang };
+                        let changed = false;
+                        for (const f of ['hari','jam','ruang']) {
+                            if (n[f] && n[f] !== '-' && n[f] !== finalJadwal[idx][f]) {
+                                finalJadwal[idx][f] = n[f];
+                                changed = true;
+                            }
+                        }
+                        if (changed) scheduleChanges.push({ type: 'updated', key, before, after: { hari: finalJadwal[idx].hari, jam: finalJadwal[idx].jam, ruang: finalJadwal[idx].ruang } });
+                    } else {
+                        const matchKhs = (allData.khs?.matkul || []).find((k:any) => normalizeKey(k.code || k.matkul || '') === key);
+                        const toAdd = { ...n, dosen: n.dosen || (matchKhs?.dosen || '-') };
+                        finalJadwal.push(toAdd);
+                        scheduleChanges.push({ type: 'added', key, item: toAdd });
+                    }
+                }
+            } else {
+                finalJadwal = (allData.jadwal || []).map((n:any) => {
+                    const matchKhs = (allData.khs?.matkul || []).find((k:any) => normalizeKey(k.code || k.matkul || '') === normalizeKey(n.code || n.matkul || ''));
+                    return { ...n, dosen: n.dosen || (matchKhs?.dosen || '-') };
+                });
+                if (session && session.semester && semesterActive && session.semester !== semesterActive) {
+                    scheduleChanges.push({ type: 'semester_changed', from: session.semester, to: semesterActive });
+                }
+            }
+
+            // scheduleStats
+            const totalClasses = finalJadwal.length;
+            const editedCount = finalJadwal.filter((j:any) => (j.hari && j.hari !== '-' && j.hari !== '') || (j.jam && j.jam !== '-' && j.jam !== '') || (j.ruang && j.ruang !== '-' && j.ruang !== '')).length;
+            const dayNames: Record<number,string> = {0:'Minggu',1:'Senin',2:'Selasa',3:'Rabu',4:'Kamis',5:'Jumat',6:'Sabtu'};
+            const todayName = dayNames[new Date().getDay()];
+            const scheduleToday = finalJadwal.filter((j:any) => (j.hari || '').toLowerCase().includes(todayName.toLowerCase()));
+
+            // persist session (cookiesLatest)
             const cookiesLatest = await page.cookies();
-            const s = createSession(nim, cookiesLatest as any);
+            let outToken = sessionToken;
+            if (session) {
+                updateSession(sessionToken!, cookiesLatest as any, { semester: semesterActive, jadwal: finalJadwal });
+            } else {
+                const s = createSession(nim, cookiesLatest as any);
+                outToken = s.token;
+                updateSession(s.token, cookiesLatest as any, { semester: semesterActive, jadwal: finalJadwal });
+            }
+
             await browser.close();
 
-            const response = NextResponse.json({ success: true, nim, ...allData });
-            response.cookies.set('siakad_session', s.token, { httpOnly: true, secure: true, path: '/' });
+            const responsePayload = {
+                success: true,
+                nim,
+                profile: allData.profile,
+                dashboard: allData.dashboard || {},
+                keuangan: allData.keuangan,
+                registrasi: allData.registrasi,
+                khs: allData.khs,
+                dhs: allData.dhs,
+                jadwal: finalJadwal,
+                dhe: allData.dhe,
+                scheduleChanges,
+                scheduleStats: { totalClasses, editedCount, scheduleTodayCount: scheduleToday.length, scheduleToday }
+            };
+
+            const response = NextResponse.json(responsePayload);
+            if (outToken) response.cookies.set('siakad_session', outToken, { httpOnly: true, secure: true, path: '/' });
             return response;
 
         } catch (error: any) {
