@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Calendar, CreditCard, LayoutDashboard, Menu, BarChart3, Sun, Bell } from "lucide-react";
 import { subscribeToPush } from "../../lib/pushClient";
 import { useToast } from "../../components/ToastProvider";
