@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
-import { cleanupSessions, createSession, dedupeInflight, getSession, updateSession } from './_session';
+/* eslint-disable @typescript-eslint/no-explicit-any */
+/* eslint-disable @typescript-eslint/no-unused-vars */
+import { createSession, dedupeInflight, getSession } from './_session';
 import chromium from '@sparticuz/chromium';
 import puppeteerCore from 'puppeteer-core';
 
@@ -59,10 +61,10 @@ export async function POST(request: Request) {
             // 1. SETUP BROWSER (Vercel Friendly)
             if (process.env.NODE_ENV === 'production') {
                 browser = await puppeteerCore.launch({
-                    args: [...chromium.args, '--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--single-process'],
-                    defaultViewport: chromium.defaultViewport,
-                    executablePath: await chromium.executablePath(),
-                    headless: chromium.headless,
+                    args: [...(chromium as any).args || [], '--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--single-process'],
+                    defaultViewport: { width: 1366, height: 768 },
+                    executablePath: await (chromium as any).executablePath(),
+                    headless: true,
                 });
             } else {
                 const { default: puppeteer } = await import('puppeteer-extra');
@@ -96,7 +98,7 @@ export async function POST(request: Request) {
                 const frames = [page.mainFrame(), ...page.frames()];
                 for (const f of frames) {
                     try {
-                        const res = await f.evaluate(fn);
+                        const res = await (f as any).evaluate(fn);
                         if (res) return res;
                     } catch {}
                 }
@@ -107,15 +109,15 @@ export async function POST(request: Request) {
             await gotoPage('https://siakad.um.ac.id/');
             
             // Cek status login
-            const isLoginPage = await page.evaluate(() => !!document.querySelector('input[type="password"]'));
+            const isLoginPage = await (page as any).evaluate(() => !!document.querySelector('input[type="password"]'));
             
             if (isLoginPage) {
                 if (password) {
                     await page.type('input[name="username"], #username', nim);
                     await page.type('input[type="password"]', password);
                     await Promise.all([
-                        page.click('button[type="submit"]'),
-                        page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 60000 })
+                        (page as any).click('button[type="submit"]'),
+                        (page as any).waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 60000 })
                     ]);
                 } else if (session) {
                     await page.setCookie(...session.cookies);
@@ -124,7 +126,7 @@ export async function POST(request: Request) {
             }
 
             // Validasi Akhir
-            const stillLogin = await page.evaluate(() => !!document.querySelector('input[type="password"]'));
+            const stillLogin = await (page as any).evaluate(() => !!document.querySelector('input[type="password"]'));
             if (stillLogin) throw new Error("Gagal Login. Password Salah?");
 
             // --- 3. MULAI SCRAPING 7 FITUR ---
@@ -178,107 +180,139 @@ export async function POST(request: Request) {
                 }
             }
 
-            // B. KEUANGAN (FIX 450 JUTA)
+            // B. KEUANGAN (improved parsing)
             console.log("📍 Scraping Keuangan...");
             await gotoPage('https://siakad.um.ac.id/riwayat-keuangan/');
             const keuData = await scrape(() => {
-                const res: any[] = [];
-                const rows = Array.from(document.querySelectorAll('tr'));
-                
-                rows.forEach(row => {
-                    const txt = row.innerText;
-                    // Harus ada 5 digit angka (thaka)
-                    if (/\d{5}/.test(txt)) {
-                        const cols = Array.from(row.querySelectorAll('td')).map(td => td.innerText.trim());
-                        
-                        // Deteksi Kolom secara Cerdas
+                const rows = Array.from(document.querySelectorAll('table')).flatMap(t => Array.from(t.querySelectorAll('tr')));
+                const out: any[] = [];
+
+                const parseMoney = (raw: string) => {
+                    if (!raw) return 0;
+                    const candidates = raw.split(/\s+/).filter(s => /\d+[\.\,]\d/.test(s));
+                    const token = candidates.length ? candidates[0] : raw;
+                    const main = String(token).split(',')[0];
+                    const digits = main.replace(/[^0-9]/g, '');
+                    return parseInt(digits || '0', 10) || 0;
+                };
+
+                for (const row of rows) {
+                    try {
+                        const cols = Array.from(row.querySelectorAll('td')).map(td => td.innerText.trim()).filter(Boolean);
+                        if (!cols.length) continue;
                         const thaka = cols.find(c => /^\d{5}$/.test(c));
-                        const tgl = cols.find(c => /\d{2}\/\d{2}\/\d{4}/.test(c));
-                        // Uang: Ada titik/koma, bukan thaka, bukan tanggal
-                        const moneyRaw = cols.find(c => c !== thaka && (c.includes('.') || c.includes(',')) && !c.includes('/')) || "0";
+                        if (!thaka) continue;
 
-                        if (thaka) {
-                            // --- FIX PARSING UANG ---
-                            // 1. Ambil sebelum koma: "4.500.000,00" -> "4.500.000"
-                            const mainPart = moneyRaw.split(',')[0];
-                            // 2. Hapus non-digit: "4.500.000" -> 4500000
-                            const nominal = parseInt(mainPart.replace(/\D/g, '')) || 0;
+                        const tgl = cols.find(c => /\d{2}\/\d{2}\/\d{4}/.test(c)) || null;
+                        const moneyCandidates = cols.filter(c => /\d+[\.\,]\d{2}/.test(c) || /\d{1,3}(?:\.\d{3})+/.test(c));
+                        const moneyRaw = moneyCandidates.length ? moneyCandidates[moneyCandidates.length - 1] : cols.find(c => /\d/.test(c) && !/^\d{5}$/.test(c)) || '0';
+                        const nominal = parseMoney(moneyRaw);
 
-                            const isLunas = !!tgl;
-                            let status = isLunas ? "Lunas" : "Belum Bayar";
-                            if (nominal === 0 && isLunas) status = "Lunas (KIP-K)";
+                        const isLunas = !!tgl;
+                        const year = thaka.slice(0, 4);
+                        const kd = thaka.slice(4);
+                        const term = kd === '1' ? 'Ganjil' : kd === '2' ? 'Genap' : 'Antara';
 
-                            const th = thaka.slice(0, 4);
-                            const kd = thaka.slice(4);
-                            const sm = kd==='1'?'Ganjil':kd==='2'?'Genap':'Antara';
+                        out.push({
+                            thaka,
+                            semester: `Semester ${term} ${year}/${parseInt(year)+1}`,
+                            nominal: `Rp ${new Intl.NumberFormat('id-ID').format(nominal)}`,
+                            spp: nominal,
+                            status: isLunas ? 'Lunas' : 'Belum Bayar',
+                            tglBayar: tgl || '-',
+                            raw: cols
+                        });
+                    } catch {}
+                }
 
-                            res.push({
-                                thaka,
-                                semester: `Semester ${sm} ${th}/${parseInt(th)+1}`,
-                                nominal: `Rp ${new Intl.NumberFormat('id-ID').format(nominal)}`,
-                                spp: nominal,
-                                status: status,
-                                tglBayar: tgl || "-"
-                            });
-                        }
-                    }
-                });
-                return res.reverse();
+                return out.reverse();
             });
             if (keuData) {
                 allData.keuangan.riwayat = keuData;
-                allData.keuangan.totals.ukt = keuData.reduce((a:any, b:any) => a + b.spp, 0);
+                allData.keuangan.totals.ukt = keuData.reduce((a:any, b:any) => a + (b.spp || 0), 0);
             }
 
-            // C. JADWAL (HANYA MATKUL & DOSEN)
+            // C. JADWAL (detect columns + fallback heuristics)
             console.log("📍 Scraping Jadwal...");
             await gotoPage('https://siakad.um.ac.id/krs/');
             const jadwalData = await scrape(() => {
-                const res: any[] = [];
+                const tables = Array.from(document.querySelectorAll('table'));
+                for (const t of tables) {
+                    try {
+                        const ths = Array.from(t.querySelectorAll('th')).map(h => h.innerText.trim().toLowerCase());
+                        const rows = Array.from(t.querySelectorAll('tbody tr'));
+                        if (!ths.length && rows.length === 0) continue;
+
+                        // build index map
+                        const idx = (name: string) => ths.findIndex(h => h.includes(name));
+                        const iKode = idx('kode');
+                        const iNama = idx('nama') >= 0 ? idx('nama') : idx('mata') >= 0 ? idx('mata') : idx('mk');
+                        const iDosen = idx('dosen');
+                        const iHari = idx('hari');
+                        const iJam = idx('jam');
+                        const iRuang = idx('ruang');
+
+                        if (iNama >= 0 || iKode >= 0) {
+                            return rows.map(r => {
+                                const cols = Array.from(r.querySelectorAll('td')).map(td => td.innerText.trim());
+                                const code = (iKode >= 0 ? cols[iKode] : cols[0]) || '';
+                                const name = (iNama >= 0 ? cols[iNama] : cols[1]) || '';
+                                const dosen = (iDosen >= 0 ? cols[iDosen] : (cols[cols.length-1] || '-')) || '-';
+                                const hari = iHari >= 0 ? (cols[iHari] || '-') : (cols.find(c => /^(Senin|Selasa|Rabu|Kamis|Jumat|Sabtu|Minggu)$/i.test(c)) || '-');
+                                const jam = iJam >= 0 ? (cols[iJam] || '-') : (cols.find(c => /\d{2}:\d{2}/.test(c)) || '-');
+                                const ruang = iRuang >= 0 ? (cols[iRuang] || '-') : (cols.find(c => /ruang|lab|gedung|rm|room/i.test(c)) || '-');
+                                return { code, matkul: name, dosen, hari, jam, ruang };
+                            }).filter(x => x.matkul);
+                        }
+                    } catch {}
+                }
+
+                // fallback: try to heuristically extract from any tr
                 const rows = Array.from(document.querySelectorAll('tr'));
-                
+                const out: any[] = [];
                 rows.forEach(row => {
                     const cols = Array.from(row.querySelectorAll('td')).map(td => td.innerText.trim());
-                    // Skip jika baris terlalu pendek
-                    if (cols.length < 3) return;
-
-                    // Logic Deteksi Matkul & Dosen:
-                    // Dosen: Teks yg ada gelar (titik/koma) atau panjang
-                    const dosen = cols.find(t => (t.includes('.') || t.includes(',')) && t.length > 5 && !t.match(/\d{2}:\d{2}/));
-                    
-                    // Matkul: Teks panjang yang BUKAN Dosen, BUKAN Hari, BUKAN Jam
-                    const matkul = cols.find(t => 
-                        t.length > 5 && 
-                        t !== dosen &&
-                        !/^(Senin|Selasa|Rabu|Kamis|Jumat|Sabtu)$/i.test(t) &&
-                        !/\d{2}:\d{2}/.test(t) &&
-                        !/Gedung|Ruang|SKS|Total/i.test(t) &&
-                        !/^\d+$/.test(t)
-                    );
-
-                    if (matkul) {
-                        res.push({
-                            matkul: matkul,
-                            dosen: dosen || "-",
-                            hari: "-", // Request Mas: Strip
-                            jam: "-",  // Request Mas: Strip
-                            ruang: "-" // Request Mas: Strip
-                        });
-                    }
+                    if (cols.length < 2) return;
+                    const jam = cols.find(c => /\d{2}:\d{2}/.test(c)) || '-';
+                    const hari = cols.find(c => /^(Senin|Selasa|Rabu|Kamis|Jumat|Sabtu|Minggu)$/i.test(c)) || '-';
+                    const dosen = cols.find(c => (c.includes('.') || c.includes(',')) && c.length > 5) || '-';
+                    const matkul = cols.find(c => c.length > 6 && c !== dosen && !/\d/.test(c)) || cols[0] || '-';
+                    out.push({ code: '', matkul, dosen, hari, jam, ruang: '-' });
                 });
-                return res;
+                return out;
             });
             if (jadwalData) allData.jadwal = jadwalData;
 
-            // D. KHS (AMBIL IPS)
+            // D. KHS (IPS + mata kuliah)
             console.log("📍 Scraping KHS...");
             await gotoPage('https://siakad.um.ac.id/khs/');
-            const ipsData = await scrape(() => {
-                const text = document.body.innerText;
-                const m = text.match(/IPS\s*[:=]?\s*(\d+[\.,]\d{2})/i);
-                return m ? m[1].replace(',', '.') : null;
+            const khsData = await scrape(() => {
+                const body = document.body.innerText || '';
+                const ipsMatch = body.match(/IPS\s*[:=]?\s*(\d+[\.,]\d{2})/i);
+                const tables = Array.from(document.querySelectorAll('table'));
+                let matkul: any[] = [];
+                for (const t of tables) {
+                    try {
+                        const ths = Array.from(t.querySelectorAll('th')).map(h => h.innerText.trim().toLowerCase()).join(' ');
+                        if ((ths.includes('nama') || ths.includes('mata') || ths.includes('kode')) && ths.includes('sks')) {
+                            const rows = Array.from(t.querySelectorAll('tr')).slice(1);
+                            matkul = rows.map(r => {
+                                const cols = Array.from(r.querySelectorAll('td')).map(td => td.innerText.trim());
+                                const code = cols[0] || '';
+                                const name = cols[1] || '';
+                                const sks = parseInt(cols[2] || '0') || 0;
+                                const nilai = cols.length > 3 ? cols[cols.length - 2] : '';
+                                const dosen = cols.length > 3 ? cols[cols.length - 1] : '';
+                                return { code, matkul: name, sks, nilai, dosen };
+                            }).filter(x => x.matkul);
+                            if (matkul.length) break;
+                        }
+                    } catch {}
+                }
+                return { ips: ipsMatch ? ipsMatch[1].replace(',', '.') : '0.00', matkul };
             });
-            allData.khs.ips = ipsData || "0.00";
+            allData.khs.ips = khsData?.ips || '0.00';
+            allData.khs.matkul = khsData?.matkul || [];
 
             // E. DHS (IPK & FALLBACK)
             console.log("📍 Scraping DHS...");
@@ -302,22 +336,30 @@ export async function POST(request: Request) {
             console.log("📍 Scraping Registrasi...");
             await gotoPage('https://siakad.um.ac.id/riwayat-registrasi/');
             const regData = await scrape(() => {
-                const res: any[] = [];
-                document.querySelectorAll('tr').forEach(r => {
-                    const c = Array.from(r.querySelectorAll('td')).map(td => td.innerText.trim());
-                    const sem = c.find(t => /^\d{5}$/.test(t));
-                    const stat = c.find(t => /Aktif|Cuti|Lulus/i.test(t));
-                    
-                    if (sem) {
-                        const th = sem.slice(0,4), kd = sem.slice(4);
-                        const sm = kd==='1'?'Ganjil':kd==='2'?'Genap':'Antara';
-                        res.push({ 
-                            semester: `Semester ${sm} ${th}/${parseInt(th)+1}`, 
-                            status: stat || "Aktif" 
-                        });
-                    }
+                const out: any[] = [];
+                const rows = Array.from(document.querySelectorAll('tr'));
+                for (const r of rows) {
+                    try {
+                        const cols = Array.from(r.querySelectorAll('td')).map(td => td.innerText.trim()).filter(Boolean);
+                        if (!cols.length) continue;
+                        const sem = cols.find(c => /^\d{5}$/.test(c));
+                        const statusRaw = cols.find(c => /Aktif|Cuti|Lulus|Tidak Aktif|Menunggu|Lunas/i.test(c)) || '-';
+                        if (sem) {
+                            const year = sem.slice(0,4);
+                            const t = sem.slice(4);
+                            const term = t === '1' ? 'Ganjil' : t === '2' ? 'Genap' : 'Antara';
+                            const status = /aktif/i.test(String(statusRaw)) ? 'Aktif' : /cuti/i.test(String(statusRaw)) ? 'Cuti' : /lulus/i.test(String(statusRaw)) ? 'Lulus' : String(statusRaw);
+                            out.push({ semester: `Semester ${term} ${year}/${parseInt(year)+1}`, status, active: /aktif/i.test(String(statusRaw)) });
+                        }
+                    } catch {}
+                }
+                // dedupe keeping first occurrence
+                const map = new Map();
+                return out.filter(o => {
+                    if (map.has(o.semester)) return false;
+                    map.set(o.semester, true);
+                    return true;
                 });
-                return res;
             });
             if (regData) allData.registrasi = regData;
 
