@@ -79,9 +79,47 @@ export function persistSiakadUser(data: SiakadAuthPayload) {
   localStorage.setItem("user_khs", JSON.stringify(data.khs ?? {}));
   localStorage.setItem("user_dhs", JSON.stringify(data.dhs ?? {}));
   // If scraper returns empty jadwal, keep the existing jadwal (often user-edited).
-  const incomingJadwal = Array.isArray(data.jadwal) ? (data.jadwal as unknown[]) : null;
+  const incomingJadwal = Array.isArray(data.jadwal) ? (data.jadwal as any[]) : null;
   if (incomingJadwal && incomingJadwal.length > 0) {
-    localStorage.setItem("user_jadwal", JSON.stringify(incomingJadwal));
+    // Merge incoming jadwal with existing manual edits in localStorage
+    try {
+      const prev = existingJadwal ? JSON.parse(existingJadwal) : [];
+      const normalize = (s: unknown) => String(s || '').toLowerCase().replace(/[\s\-_.()\[\]]+/g, ' ').replace(/\s+/g, ' ').trim();
+
+      const mapIndex = new Map<string, number>();
+      const merged: any[] = [];
+
+      // Index previous items (to preserve manual edits)
+      (prev || []).forEach((p: any, i: number) => {
+        const key = normalize(p.code || p.matkul || p.name || p);
+        mapIndex.set(key, i);
+        merged.push(p);
+      });
+
+      for (const item of incomingJadwal) {
+        const key = normalize(item.code || item.matkul || item.name || item);
+        const idx = mapIndex.get(key);
+        if (typeof idx === 'number') {
+          const existing = merged[idx] || {};
+          // Preserve manual flag and any manually edited fields
+          const isManual = existing.isManual || false;
+          if (isManual) {
+            // keep existing (manual) entirely, but ensure dosen is present
+            merged[idx] = { ...item, ...existing, dosen: existing.dosen || item.dosen };
+          } else {
+            // merge scraped data over existing
+            merged[idx] = { ...item, ...existing, isManual: existing.isManual || false };
+          }
+        } else {
+          // new item
+          merged.push({ ...item, isManual: false });
+        }
+      }
+
+      localStorage.setItem("user_jadwal", JSON.stringify(merged));
+    } catch {
+      localStorage.setItem("user_jadwal", JSON.stringify(incomingJadwal));
+    }
   } else if (existingJadwal) {
     localStorage.setItem("user_jadwal", existingJadwal);
   } else {

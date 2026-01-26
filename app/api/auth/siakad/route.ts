@@ -221,7 +221,20 @@ export async function POST(request: Request) {
             });
             if (keuData) {
                 allData.keuangan.riwayat = keuData;
-                allData.keuangan.totals.ukt = keuData.reduce((a:any, b:any) => a + b.spp, 0);
+                const uktTotal = keuData.reduce((a:any, b:any) => a + (Number(b.spp) || 0), 0);
+                allData.keuangan.totals.ukt = uktTotal;
+
+                // Build totals summary
+                const paidCount = keuData.filter((r:any) => (r.status || '').toLowerCase().includes('lunas')).length;
+                const totalPaid = keuData.filter((r:any) => (r.status || '').toLowerCase().includes('lunas')).reduce((a:any,b:any)=>a + (Number(b.spp)||0),0);
+                const unpaidCount = Math.max(keuData.length - paidCount, 0);
+                const activeThaka = (keuData[0] && keuData[0].thaka) || null;
+
+                allData.keuangan.totals = { ukt: uktTotal, totalPaid, paidCount, unpaidCount, activeThaka };
+
+                // Build master (best-effort): prefer explicit fields if present, otherwise place ukt into spp
+                const master: any = { spp: uktTotal, hotma: 0, spsa: 0, kpmb: 0, bpp: 0, lain: 0, total: uktTotal };
+                allData.keuangan.master = master;
             }
 
             // C. JADWAL (detect columns + fallback heuristics)
@@ -275,15 +288,67 @@ export async function POST(request: Request) {
             });
             if (jadwalData) allData.jadwal = jadwalData;
 
-            // D. KHS (IPS)
+            // D. KHS (IPS + Mata Kuliah)
             console.log("📍 Scraping KHS...");
             await gotoPage('https://siakad.um.ac.id/khs/');
-            const ipsData = await scrape(() => {
+            const khsPage = await scrape(() => {
                 const text = document.body.innerText;
-                const m = text.match(/IPS\s*[:=]?\s*(\d+[\.,]\d{2})/i);
-                return m ? m[1].replace(',', '.') : null;
+                const ipsMatch = text.match(/IPS\s*[:=]?\s*(\d+[\.,]\d{2})/i);
+                const ips = ipsMatch ? ipsMatch[1].replace(',', '.') : null;
+
+                // Try to find a semester label on the page
+                let semester: string | null = null;
+                const possible = Array.from(document.querySelectorAll('h1,h2,h3,div,span')) as HTMLElement[];
+                for (const el of possible) {
+                    const t = (el.textContent || '').trim();
+                    if (/semester/i.test(t) && t.length < 80) { semester = t; break; }
+                }
+                if (!semester) {
+                    const m2 = text.match(/Semester\s*[:\-\s]*([^\n\r]+)/i);
+                    if (m2) semester = m2[1].trim();
+                }
+
+                // Parse table rows for mata kuliah
+                const tables = Array.from(document.querySelectorAll('table'));
+                let matkul: any[] = [];
+                for (const t of tables) {
+                    try {
+                        const ths = Array.from(t.querySelectorAll('th')).map(h => h.innerText.trim().toLowerCase());
+                        const rows = Array.from(t.querySelectorAll('tbody tr, tr'));
+                        const hasName = ths.some(h => h.includes('mata') || h.includes('matkul') || h.includes('nama')) || ths.length === 0;
+                        if (!hasName || rows.length === 0) continue;
+
+                        matkul = rows.map(r => {
+                            const cols = Array.from(r.querySelectorAll('td')).map(td => td.innerText.trim());
+                            if (!cols || cols.length === 0) return null;
+
+                            // Heuristics: nilai often in last column; sks is a short number column
+                            let nilai = '-';
+                            let sks = 0;
+
+                            // try find sks as a short numeric column
+                            for (const c of cols) {
+                                if (/^\d+$/.test(c) && Number(c) > 0 && Number(c) < 10) { sks = parseInt(c); break; }
+                            }
+
+                            const last = cols[cols.length - 1] || '';
+                            if (last && /[A-F]|\b[0-9]{1,3}\b|T|P/i.test(last)) nilai = last;
+
+                            // name: pick the longest non-numeric cell
+                            const name = cols.find(c => c.length > 6 && !/^\d+$/.test(c)) || cols[0] || '-';
+                            return { matkul: name, sks, nilai };
+                        }).filter(Boolean);
+
+                        if (matkul.length) break;
+                    } catch {}
+                }
+
+                return { ips, semester, matkul };
             });
-            allData.khs.ips = ipsData || "0.00";
+
+            allData.khs.ips = khsPage?.ips || "0.00";
+            allData.khs.semester = khsPage?.semester || allData.khs.semester || "-";
+            allData.khs.matkul = Array.isArray(khsPage?.matkul) ? khsPage!.matkul : [];
 
             // E. DHS (IPK)
             console.log("📍 Scraping DHS...");
