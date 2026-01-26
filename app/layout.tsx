@@ -78,12 +78,8 @@ export default function RootLayout({
           <div className="blob blob-3" />
         </div>
 
-        <PageTransitionClient>
-          {/* ToastProvider must wrap children to allow toasts from any page */}
-          <ToastProvider>
-            {children}
-          </ToastProvider>
-        </PageTransitionClient>
+        {/* Temporarily render children directly while debugging client-side error */}
+        {children}
       </body>
     </html>
   );
