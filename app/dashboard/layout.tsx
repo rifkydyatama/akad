@@ -70,7 +70,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     if (!ready) return;
     let cancelled = false;
 
-    const maxAgeMs = 10 * 60 * 1000; // 10 minutes
+    // Keep sync infrequent to avoid spammy behavior and UI flicker.
+    const maxAgeMs = 24 * 60 * 60 * 1000; // 24 hours
     const inflightTtlMs = 7 * 60 * 1000; // if a sync started recently, don't start another
 
     const canStartSync = () => {
@@ -88,9 +89,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       if (cancelled) return;
       if (!canStartSync()) return;
       if (!shouldSyncNow()) return;
-
       localStorage.setItem("siakad_sync_inflight_ts", String(Date.now()));
-      setAutoSyncing(true);
+      // avoid UI flicker: only show 'autoSyncing' if sync takes longer than a short threshold
+      let spinnerTimer: number | null = null;
+      const SPINNER_DELAY = 800; // ms
+      spinnerTimer = window.setTimeout(() => setAutoSyncing(true), SPINNER_DELAY);
       try {
         const res = await fetch("/api/auth/siakad", {
           method: "POST",
@@ -112,6 +115,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         // Silent fail; user can manual sync.
       } finally {
         if (!cancelled) {
+          if (spinnerTimer) {
+            clearTimeout(spinnerTimer);
+            spinnerTimer = null;
+          }
           setAutoSyncing(false);
           localStorage.removeItem("siakad_sync_inflight_ts");
         }

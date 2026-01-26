@@ -19,6 +19,8 @@ export type SiakadAuthPayload = {
   message?: string;
 };
 
+import { scheduleNotificationsFromLocalStorage, requestNotificationPermission, registerServiceWorker } from './notifications';
+
 export function persistSiakadUser(data: SiakadAuthPayload) {
   // Don't clear the whole storage; preserve app state like last-sync timestamp.
   const lastSync = localStorage.getItem("siakad_last_sync_ts");
@@ -137,5 +139,17 @@ export function persistSiakadUser(data: SiakadAuthPayload) {
   // Notify current tab listeners that new data is available.
   if (typeof window !== "undefined") {
     window.dispatchEvent(new Event("siakad-sync"));
+    // Non-blocking: try to register service worker and request permission, then schedule notifications
+    (async () => {
+      try {
+        await registerServiceWorker();
+        const perm = await requestNotificationPermission();
+        if (perm === 'granted') {
+          scheduleNotificationsFromLocalStorage();
+        }
+      } catch (e) {
+        console.warn('notification init failed', e);
+      }
+    })();
   }
 }
