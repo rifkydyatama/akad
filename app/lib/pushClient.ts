@@ -8,14 +8,26 @@ export function urlBase64ToUint8Array(base64String: string) {
 }
 
 export async function subscribeToPush(nim: string | null) {
-  if (!('serviceWorker' in navigator) || !('PushManager' in window)) return null;
-  const registration = await navigator.serviceWorker.register('/sw.js');
-  const permission = await Notification.requestPermission();
-  if (permission !== 'granted') return null;
-  const vapid = await fetch('/api/push/vapid').then(r => r.text());
-  const sub = await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(vapid) });
-  await fetch('/api/push/subscribe', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ nim, subscription: sub }) });
-  return sub;
+  try {
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) return null;
+    const registration = await navigator.serviceWorker.register('/sw.js');
+    await navigator.serviceWorker.ready;
+    const permission = await Notification.requestPermission();
+    if (permission !== 'granted') return null;
+    // `/api/push/vapid` returns JSON { publicKey }
+    const vapidJson = await fetch('/api/push/vapid').then(r => r.json().catch(() => null));
+    const vapid = (vapidJson && (vapidJson.publicKey || vapidJson.publicKey)) || (typeof vapidJson === 'string' ? vapidJson : null);
+    if (!vapid) {
+      console.warn('VAPID public key missing from /api/push/vapid');
+      return null;
+    }
+    const sub = await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(vapid) });
+    await fetch('/api/push/subscribe', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ nim, subscription: sub }) });
+    return sub;
+  } catch (err) {
+    console.warn('subscribeToPush error', err);
+    return null;
+  }
 }
 
 export async function unsubscribePush(subscription: PushSubscription | null) {
