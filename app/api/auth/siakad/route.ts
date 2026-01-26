@@ -298,6 +298,10 @@ export async function POST(request: Request) {
                                     total: spp.value + hotma.value + spsa.value + kpmb.value + bpp.value + kkn.value + ppl.value + lain.value,
                                     tglBayar: String(tgl).trim() || '-',
                                     bank: String(bank).trim() || '-',
+                                    // status: 'Lunas' if there's a payment date, otherwise 'Belum Bayar'
+                                    status: (String(tgl).trim() && String(tgl).trim() !== '-') ? 'Lunas' : 'Belum Bayar',
+                                    // ukt is alias for SPP/UKT column used in UI
+                                    ukt: spp.value,
                                     raw: { spp: spp.raw, hotma: hotma.raw, spsa: spsa.raw, kpmb: kpmb.raw, bpp: bpp.raw, kkn: kkn.raw, ppl: ppl.raw, lain: lain.raw }
                                 });
                             }

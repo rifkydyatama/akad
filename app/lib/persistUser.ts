@@ -25,6 +25,7 @@ export function persistSiakadUser(data: SiakadAuthPayload) {
   // Don't clear the whole storage; preserve app state like last-sync timestamp.
   const lastSync = localStorage.getItem("siakad_last_sync_ts");
   const existingJadwal = localStorage.getItem("user_jadwal");
+  const existingKeuTotalsRaw = localStorage.getItem("user_keuangan_totals");
 
   // Remove only known keys to avoid nuking unrelated app settings.
   const keysToClear = [
@@ -154,4 +155,39 @@ export function persistSiakadUser(data: SiakadAuthPayload) {
       }
     })();
   }
+
+  // Server push trigger: if unpaid count appeared/changed, notify subscribed clients (throttled)
+  try {
+    const THROTTLE_MS = 1000 * 60 * 60 * 6; // 6 hours
+    const prev = existingKeuTotalsRaw ? JSON.parse(existingKeuTotalsRaw) : {};
+    const newTotalsRaw = localStorage.getItem('user_keuangan_totals');
+    const current = newTotalsRaw ? JSON.parse(newTotalsRaw) : {};
+    const prevUnpaid = Number(prev.unpaidCount) || 0;
+    const newUnpaid = Number(current.unpaidCount) || 0;
+    const unpaidAmount = typeof current.ukt === 'number' && typeof current.totalPaid === 'number' ? Math.max(0, current.ukt - current.totalPaid) : null;
+    const lastNotRaw = localStorage.getItem('siakad_last_notif_ts');
+    const lastNot = lastNotRaw ? JSON.parse(lastNotRaw) : {};
+    const lastKeu = Number(lastNot['keuangan'] || 0);
+
+    if (newUnpaid > 0 && (prevUnpaid === 0 || newUnpaid !== prevUnpaid) && Date.now() - lastKeu > THROTTLE_MS) {
+      // send server push to subscriptions for this user (nim)
+      try {
+        const payload = {
+          title: 'Tagihan Keuangan',
+          body: `Anda memiliki ${newUnpaid} tagihan belum dibayar${unpaidAmount ? ` (Rp ${unpaidAmount.toLocaleString()})` : ''}`,
+        };
+        void fetch('/api/push/send', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ nim: data.nim || null, payload }) })
+          .then(() => {
+            // update throttle timestamp on success
+            lastNot['keuangan'] = Date.now();
+            localStorage.setItem('siakad_last_notif_ts', JSON.stringify(lastNot));
+          })
+          .catch(() => {
+            // ignore send errors
+          });
+      } catch (e) {
+        // ignore send errors
+      }
+    }
+  } catch {}
 }
