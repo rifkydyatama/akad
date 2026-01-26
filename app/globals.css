@@ -1,11 +1,34 @@
 @import "tailwindcss";
 
+/* Color system using CSS variables for easy theme switching */
+:root{
+  --bg: #f8fafc; /* slate-50 */
+  --surface: rgba(255,255,255,0.7);
+  --card-border: rgba(255,255,255,0.8);
+  --text: #0f172a;
+  --muted: #64748b;
+  --accent: #6366f1; /* indigo-500 */
+  --glass-blur: 20px;
+  --transition-fast: 160ms;
+}
+
+/* Dark theme fallback (if you ever add a dark toggle) */
+.theme-dark {
+  --bg: #0b1220;
+  --surface: rgba(12, 18, 28, 0.6);
+  --card-border: rgba(255,255,255,0.04);
+  --text: #e6eef8;
+  --muted: #9aa7bf;
+  --accent: #7c3aed;
+}
+
 /* BACKGROUND AURORA LIGHT */
 body {
-  background-color: #f8fafc; /* Slate-50 (Putih keabu-abuan dikit biar gak sakit mata) */
-  color: #0f172a; /* Teks Hitam Pekat */
-  font-family: 'Inter', sans-serif;
+  background-color: var(--bg);
+  color: var(--text);
+  font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial;
   overflow-x: hidden;
+  transition: background-color var(--transition-fast) ease, color var(--transition-fast) ease;
 }
 
 /* Background Blobs (Versi Pastel Terang) */
@@ -13,21 +36,22 @@ body {
   position: fixed;
   top: 0; left: 0; width: 100vw; height: 100vh;
   z-index: -1;
-  background: white;
+  background: linear-gradient(135deg, rgba(99,102,241,0.06) 0%, rgba(236,72,153,0.04) 40%, rgba(14,165,233,0.03) 100%);
 }
 
-.blob {
+.blob { 
   position: absolute;
   filter: blur(80px);
   z-index: -1;
-  opacity: 0.5;
+  opacity: 0.55;
   animation: float 10s infinite ease-in-out;
+  transition: opacity 300ms ease, transform 300ms ease;
 }
 
 /* Warna-warna pastel cerah */
-.blob-1 { top: -10%; left: -10%; width: 400px; height: 400px; background: #bfdbfe; /* Biru Muda */ animation-delay: 0s; }
-.blob-2 { bottom: 10%; right: -10%; width: 300px; height: 300px; background: #e9d5ff; /* Ungu Muda */ animation-delay: 2s; }
-.blob-3 { top: 40%; left: 30%; width: 250px; height: 250px; background: #fbcfe8; /* Pink Muda */ animation-delay: 4s; }
+.blob-1 { top: -10%; left: -10%; width: 420px; height: 420px; background: rgba(99,102,241,0.18); animation-delay: 0s; border-radius: 48%; }
+.blob-2 { bottom: 8%; right: -8%; width: 320px; height: 320px; background: rgba(233,213,255,0.18); animation-delay: 2s; border-radius: 46%; }
+.blob-3 { top: 38%; left: 30%; width: 260px; height: 260px; background: rgba(251,207,232,0.16); animation-delay: 4s; border-radius: 50%; }
 
 @keyframes float {
   0% { transform: translate(0, 0) scale(1); }
@@ -53,23 +77,46 @@ body {
 
 /* GLASS CARD LIGHT (Kaca Es Terang) */
 .glass-card {
-  background: rgba(255, 255, 255, 0.7); /* Putih Transparan */
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  border: 1px solid rgba(255, 255, 255, 0.8);
-  box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.05); /* Bayangan super halus */
+  background: var(--surface);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  border: 1px solid var(--card-border);
+  box-shadow: 0 10px 30px -10px rgba(2,6,23,0.06);
+  transition: transform 200ms ease, box-shadow 200ms ease, background 200ms ease;
 }
 
 .glass-card:hover {
-  background: rgba(255, 255, 255, 0.9);
-  transform: translateY(-3px);
-  box-shadow: 0 20px 40px -10px rgba(0, 0, 0, 0.1);
+  transform: translateY(-6px) scale(1.005);
+  box-shadow: 0 28px 60px -12px rgba(2,6,23,0.12);
 }
 
 /* Scrollbar Cantik (Kecil) */
-::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
+::-webkit-scrollbar-thumb { background: linear-gradient(180deg,var(--accent),rgba(99,102,241,0.6)); border-radius: 999px; opacity: 0.9; }
+
+/* Subtle entrance animation for main content */
+.page-enter { opacity: 0; transform: translateY(8px) scale(0.998); }
+.page-enter-active { opacity: 1; transform: translateY(0) scale(1); transition: all 260ms cubic-bezier(.2,.9,.2,1); }
+
+/* Theme toggle button */
+.theme-toggle {
+  display: inline-flex; align-items: center; justify-content: center; width: 40px; height: 40px; border-radius: 10px;
+  background: linear-gradient(180deg, rgba(255,255,255,0.6), rgba(255,255,255,0.4)); border: 1px solid rgba(255,255,255,0.6);
+  box-shadow: 0 6px 18px -8px rgba(2,6,23,0.08);
+  transition: transform 160ms ease, background 160ms ease;
+}
+.theme-toggle:hover { transform: translateY(-3px); }
+
+/* Card entrance + subtle hover */
+.card-animate { transform-origin: center top; animation: card-in 320ms cubic-bezier(.2,.9,.2,1); }
+@keyframes card-in { from { opacity: 0; transform: translateY(6px) scale(0.998); } to { opacity: 1; transform: translateY(0) scale(1); } }
+
+/* Manual badge */
+.badge-manual { position: absolute; right: 12px; top: 12px; font-size: 11px; font-weight: 800; padding: 6px 8px; border-radius: 999px; color: white; background: linear-gradient(90deg,var(--accent), #10b981); box-shadow: 0 8px 20px rgba(99,102,241,0.12); transform: translateZ(0); }
+.badge-manual .dot { display:inline-block;width:8px;height:8px;background:white;border-radius:999px;margin-right:6px;box-shadow:0 2px 6px rgba(0,0,0,0.08);} 
+
+
 
 /* If you want a "phone-sized" shell, apply it via a class (not global selectors) */
 .phone-shell {

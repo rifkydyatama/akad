@@ -93,14 +93,19 @@ export default function JadwalPage() {
             <div className="rounded-2xl bg-white/60 p-4 text-xs font-semibold text-slate-600">Belum ada data jadwal. Tekan Sinkronisasi.</div>
           ) : (
             jadwal.map((item, idx) => (
-              <div key={idx} className="relative overflow-hidden rounded-3xl bg-white/60 p-5">
+              <div key={idx} className="relative overflow-hidden rounded-3xl bg-white/60 p-5 card-animate">
                 <div className={item.isManual ? "absolute left-0 top-0 h-full w-1.5 bg-emerald-500" : "absolute left-0 top-0 h-full w-1.5 bg-blue-500"} />
+                {item.isManual ? (
+                  <div className="badge-manual">
+                    <span className="dot" />MANUAL
+                  </div>
+                ) : null}
 
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <div className="truncate text-sm font-black text-slate-900">{item.matkul || "-"}</div>
                     <div className="mt-2 flex flex-wrap items-center gap-2">
-                      <span className={item.isManual ? "inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-1 text-[10px] font-black text-emerald-700" : "inline-flex items-center gap-1 rounded-full bg-orange-50 px-2.5 py-1 text-[10px] font-black text-orange-700"}>
+                      <span className={item.isManual ? "inline-flex items-center gap-1 rounded-full bg-emerald-50/80 px-2.5 py-1 text-[10px] font-black text-emerald-700" : "inline-flex items-center gap-1 rounded-full bg-orange-50/80 px-2.5 py-1 text-[10px] font-black text-orange-700"}>
                         <Clock className={item.isManual ? "h-3 w-3 text-emerald-600" : "h-3 w-3 text-orange-600"} />
                         {(item.hari || "-") + ", " + (item.jam || "-")}
                       </span>

@@ -22,6 +22,7 @@ import ClassNotification from "../components/ClassNotification";
 import MobileBottomNav from "./_components/MobileBottomNav";
 import { persistSiakadUser } from "../lib/persistUser";
 import NotificationsToggle from "../components/NotificationsToggle";
+import ThemeToggle from "../components/ThemeToggle";
 
 type NavItem = {
   href: string;
@@ -193,8 +194,13 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           </div>
 
           <div className="flex items-center gap-2">
-            <div className="hidden sm:block">
-              <NotificationsToggle nim={user?.nim || null} />
+            <div className="hidden sm:flex items-center gap-3">
+              <div className="hidden sm:block">
+                <ThemeToggle />
+              </div>
+              <div className="hidden sm:block">
+                <NotificationsToggle nim={user?.nim || null} />
+              </div>
             </div>
             <button
               type="button"
