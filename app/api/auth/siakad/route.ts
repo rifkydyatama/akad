@@ -15,7 +15,7 @@ export const maxDuration = 60;
 type Profile = { name: string; prodi: string; fakultas: string; dosenPa: string; status: string; jalur: string; foto: string | null; };
 type AllData = {
     profile: Profile;
-    keuangan: { riwayat: any[]; totals: { ukt: number } };
+    keuangan: { riwayat: any[]; totals: { ukt: number; totalPaid?: number; paidCount?: number; unpaidCount?: number; activeThaka?: string }; master?: Record<string, any> };
     dashboard?: { term?: string; paymentStatus?: string; sks?: number; ip?: string };
     jadwal: any[];
     khs: { ips: string; semester: string; matkul: any[] };
@@ -145,13 +145,21 @@ export async function POST(request: Request) {
             console.log("📍 Scraping Dashboard...");
             await gotoPage('https://siakad.um.ac.id/dashboard/');
             const profData = await scrape(() => {
-                const body = document.body.innerText;
-                const find = (k: string) => (body.match(new RegExp(`${k}\\s*[:]?\\s*([^\\n]+)`, 'i')) || [])[1]?.trim() || "-";
-                
-                // Selector Spesifik sesuai Screenshot Mas
-                const elNama = document.querySelector('a.aku'); // "RIFKY DYATAMA..."
-                const imgEl = document.querySelector('img[src*="foto"], img[src*="GetFoto"]') as HTMLImageElement;
-                
+                const text = document.body.innerText;
+                const find = (k: string) => (text.match(new RegExp(`${k}\s*[:]?\s*([^\n]+)`, 'i')) || [])[1]?.trim() || "-";
+
+                const elNama = document.querySelector('a.aku');
+                const imgEl = document.querySelector('img[src*="foto"], img[src*="GetFoto"]') as HTMLImageElement | null;
+
+                // Try to extract NIM (e.g. "NIM. 250121621745") and Angkatan
+                const nimMatch = text.match(/NIM\.?\s*[:]?\s*(\d{6,})/i);
+                const nim = nimMatch ? nimMatch[1].trim() : null;
+                let angkatan: string | null = null;
+                const ang = (text.match(/Angkatan\s*[:\-\s]*([^\n\r]+)/i) || [])[1];
+                if (ang) angkatan = String(ang).trim().split(/\s+/)[0];
+
+                const fotoApi = (nim && angkatan) ? `https://api.um.ac.id/akademik/operasional/GetFoto.ptikUM?nim=${nim}&angkatan=${angkatan}` : null;
+
                 return {
                     name: elNama ? elNama.textContent?.trim() || "Mahasiswa" : find('Nama'),
                     prodi: find('Program Studi') !== '-' ? find('Program Studi') : find('Prodi'),
@@ -159,20 +167,19 @@ export async function POST(request: Request) {
                     dosenPa: find('Dosen PA'),
                     status: find('Status'),
                     jalur: find('Jalur Masuk'),
-                    fotoUrl: imgEl ? imgEl.src : null
+                    nim,
+                    angkatan,
+                    fotoUrl: imgEl ? imgEl.src : null,
+                    fotoApi
                 };
             });
             if (profData) {
                 allData.profile = { ...allData.profile, ...profData, foto: null };
-                // Ambil Foto
-                if (profData.fotoUrl) {
-                    try {
-                        const newPage = await browser.newPage();
-                        const view = await newPage.goto(profData.fotoUrl);
-                        const buf = await view?.buffer();
-                        if (buf) allData.profile.foto = `data:image/jpeg;base64,${buf.toString('base64')}`;
-                        await newPage.close();
-                    } catch {}
+                // Prefer UM API photo if available, else fallback to image src
+                if (profData.fotoApi) {
+                    allData.profile.foto = profData.fotoApi;
+                } else if (profData.fotoUrl) {
+                    allData.profile.foto = profData.fotoUrl;
                 }
             }
 
