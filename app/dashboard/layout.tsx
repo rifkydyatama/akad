@@ -21,6 +21,7 @@ import SyncModal from "./_components/SyncModal";
 import ClassNotification from "../components/ClassNotification";
 import MobileBottomNav from "./_components/MobileBottomNav";
 import { persistSiakadUser } from "../lib/persistUser";
+import NotificationsToggle from "../components/NotificationsToggle";
 
 type NavItem = {
   href: string;
@@ -151,7 +152,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   const handleLogout = () => {
     if (confirm("Keluar dari aplikasi?")) {
+      // Preserve manual schedule edits across logout
+      const preservedJadwal = localStorage.getItem('user_jadwal');
       localStorage.clear();
+      if (preservedJadwal) localStorage.setItem('user_jadwal', preservedJadwal);
       sessionStorage.clear();
       router.push("/");
     }
@@ -189,6 +193,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           </div>
 
           <div className="flex items-center gap-2">
+            <div className="hidden sm:block">
+              <NotificationsToggle nim={user?.nim || null} />
+            </div>
             <button
               type="button"
               onClick={() => setSyncOpen(true)}

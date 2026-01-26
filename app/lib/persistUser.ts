@@ -108,8 +108,19 @@ export function persistSiakadUser(data: SiakadAuthPayload) {
           // Preserve manual flag and any manually edited fields
           const isManual = existing.isManual || false;
           if (isManual) {
-            // keep existing (manual) entirely, but ensure dosen is present
-            merged[idx] = { ...item, ...existing, dosen: existing.dosen || item.dosen };
+            // If user manually edited this entry, only replace it when the course/KRS changed
+            const existingCode = normalize(existing.code || existing.matkul || existing.name || '');
+            const incomingCode = normalize(item.code || item.matkul || item.name || '');
+            const existingSks = Number(existing.sks || 0);
+            const incomingSks = Number(item.sks || 0);
+            const courseChanged = existingCode !== incomingCode || existingSks !== incomingSks;
+            if (courseChanged) {
+              // course/KRS changed — accept the new scraped entry and clear manual flag
+              merged[idx] = { ...item, isManual: false };
+            } else {
+              // keep existing manual edits intact (but ensure dosen present)
+              merged[idx] = { ...existing, dosen: existing.dosen || item.dosen };
+            }
           } else {
             // merge scraped data over existing
             merged[idx] = { ...item, ...existing, isManual: existing.isManual || false };
