@@ -19,7 +19,8 @@ export type SiakadAuthPayload = {
   message?: string;
 };
 
-import { scheduleNotificationsFromLocalStorage, requestNotificationPermission, registerServiceWorker, subscribeToPush } from './notifications';
+import { scheduleNotificationsFromLocalStorage, registerServiceWorker, clearNotificationsAndTimers, requestNotificationPermission } from "./notifications";
+import { subscribeToPush, unsubscribePush } from "./pushClient";
 
 export function persistSiakadUser(data: SiakadAuthPayload) {
   // Don't clear the whole storage; preserve app state like last-sync timestamp.
