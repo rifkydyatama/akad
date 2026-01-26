@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { BarChart3, BookOpen, GraduationCap } from "lucide-react";
 import DashboardShell from "../_components/DashboardShell";
 
-type KhsItem = { matkul?: string; sks?: number; nilai?: string };
+type KhsItem = { matkul?: string; sks?: number; nilai?: string; dosen?: string };
 type KhsPayload = { semester?: string; ips?: string; matkul?: KhsItem[] };
 
 function safeJson<T>(raw: string | null, fallback: T): T {
@@ -84,7 +84,7 @@ export default function KhsPage() {
                 <div key={idx} className="flex items-center justify-between gap-4 p-4">
                   <div className="min-w-0">
                     <div className="truncate text-xs font-extrabold text-slate-900">{m.matkul || "-"}</div>
-                    <div className="mt-1 text-[11px] font-semibold text-slate-600">SKS: {m.sks ?? "-"}</div>
+                    <div className="mt-1 text-[11px] font-semibold text-slate-600">SKS: {m.sks ?? "-"} · Dosen: {m.dosen || "-"}</div>
                   </div>
                   <div className="shrink-0 rounded-full bg-slate-900 px-3 py-1 text-[11px] font-black text-white">{m.nilai || "-"}</div>
                 </div>

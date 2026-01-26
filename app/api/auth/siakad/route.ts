@@ -241,22 +241,40 @@ export async function POST(request: Request) {
                                 // detect total row (colspan)
                                 if (r.querySelector('th') && /total/i.test(r.querySelector('th')!.textContent || '')) continue;
 
-                                const getByHeader = (name: string) => {
-                                    const idx = headers.findIndex(h => h.includes(name));
-                                    return idx >= 0 ? cols[idx] : undefined;
+                                // Build a header->cell map that accounts for a leading <th> in rows (row number)
+                                const headerToValue: Record<string, string> = {};
+                                let cellIdx = 0;
+                                const hasLeadingTh = !!r.querySelector('th');
+                                if (hasLeadingTh) {
+                                    // headers[0] is the row-number column ('#'), so align headers[1..] with cols[0..]
+                                    for (let hi = 1; hi < headers.length; hi++) {
+                                        headerToValue[headers[hi]] = cols[cellIdx++] || '';
+                                    }
+                                } else {
+                                    for (let hi = 0; hi < headers.length; hi++) {
+                                        headerToValue[headers[hi]] = cols[cellIdx++] || '';
+                                    }
+                                }
+
+                                const findHeaderValue = (names: string[]) => {
+                                    for (const n of names) {
+                                        const key = Object.keys(headerToValue).find(h => h.includes(n));
+                                        if (key) return headerToValue[key];
+                                    }
+                                    return undefined;
                                 };
 
-                                const thaka = getByHeader('thaka') || cols[1] || '';
-                                const sppRaw = getByHeader('spp') || getByHeader('spp (rp)') || cols[2] || '0';
-                                const hotmaRaw = getByHeader('hotma') || cols[3] || '0';
-                                const spsaRaw = getByHeader('spsa') || cols[4] || '0';
-                                const kpmbRaw = getByHeader('kpmb') || cols[5] || '0';
-                                const bppRaw = getByHeader('bpp') || cols[6] || '0';
-                                const kknRaw = getByHeader('kkn') || cols[7] || '0';
-                                const pplRaw = getByHeader('ppl') || cols[8] || '0';
-                                const lainRaw = getByHeader('lain') || cols[9] || '0';
-                                const tgl = getByHeader('tgl') || getByHeader('tgl bayar') || cols[10] || '';
-                                const bank = getByHeader('bank') || cols[11] || '';
+                                const thaka = findHeaderValue(['thaka']) || cols[0] || '';
+                                const sppRaw = findHeaderValue(['spp']) || cols[1] || '0';
+                                const hotmaRaw = findHeaderValue(['hotma']) || cols[2] || '0';
+                                const spsaRaw = findHeaderValue(['spsa']) || cols[3] || '0';
+                                const kpmbRaw = findHeaderValue(['kpmb']) || cols[4] || '0';
+                                const bppRaw = findHeaderValue(['bpp']) || cols[5] || '0';
+                                const kknRaw = findHeaderValue(['kkn']) || cols[6] || '0';
+                                const pplRaw = findHeaderValue(['ppl']) || cols[7] || '0';
+                                const lainRaw = findHeaderValue(['lain']) || cols[8] || '0';
+                                const tgl = findHeaderValue(['tgl bayar','tgl']) || cols[9] || '';
+                                const bank = findHeaderValue(['bank']) || cols[10] || '';
 
                                 const spp = parseMoney(sppRaw);
                                 const hotma = parseMoney(hotmaRaw);
@@ -379,7 +397,7 @@ export async function POST(request: Request) {
                     if (/^\d+[\.,]\d+$/.test(s) && !ips) ips = s.replace(',', '.');
                 }
 
-                // Table with mata kuliah: map headers to indices
+                // Table with mata kuliah: map headers to indices and skip spacer rows
                 const tables = Array.from(document.querySelectorAll('table'));
                 let matkul: any[] = [];
                 for (const t of tables) {
@@ -404,19 +422,37 @@ export async function POST(request: Request) {
                         const iDosen = idx(['dosen']);
                         const iNilai = idx(['n.h', 'nilai', 'n.h.']);
 
-                        if (iNama >= 0) {
-                            matkul = rows.map(r => {
-                                const cols = Array.from(r.querySelectorAll('td')).map(td => td.innerText.trim());
-                                if (!cols || cols.length === 0) return null;
-                                const code = iKode >= 0 ? (cols[iKode] || '') : (cols[1] || '');
-                                const name = iNama >= 0 ? (cols[iNama] || '') : (cols[2] || '');
-                                const sks = iSks >= 0 ? Number(cols[iSks]) || 0 : (Number(cols[3]) || 0);
-                                const kelas = iKelas >= 0 ? (cols[iKelas] || '-') : (cols[4] || '-');
-                                const dosen = iDosen >= 0 ? (cols[iDosen] || '-') : (cols[5] || '-');
-                                const nilai = iNilai >= 0 ? (cols[iNilai] || '-') : (cols[6] || '-');
-                                return { code, matkul: name, sks, kelas, dosen, nilai };
-                            }).filter(Boolean);
-                            if (matkul.length) break;
+                        const entries: any[] = [];
+                        for (const r of rows) {
+                            const tds = Array.from(r.querySelectorAll('td'));
+                            const cols = tds.map(td => (td.textContent || '').replace(/\u00A0/g, ' ').trim());
+                            // skip spacer/empty rows
+                            if (!cols.length) continue;
+                            if (cols.every(c => c === '' || c === '&nbsp;' || c === '\u00A0')) continue;
+                            if (cols.filter(Boolean).length < 2) continue;
+
+                            const code = (iKode >= 0 ? (cols[iKode] || '') : (cols.length > 1 ? cols[1] : cols[0])) || '';
+                            const name = (iNama >= 0 ? (cols[iNama] || '') : (cols.length > 2 ? cols[2] : cols[1] || cols[0])) || '';
+                            const sks = iSks >= 0 ? Number((cols[iSks] || '0').replace(/\D/g, '')) || 0 : Number((cols[3] || cols[2] || '0').replace(/\D/g, '')) || 0;
+                            const kelas = iKelas >= 0 ? (cols[iKelas] || '-') : (cols[4] || '-');
+                            let dosen: string | undefined = undefined;
+                            if (iDosen >= 0) dosen = cols[iDosen] || '-';
+                            else if (iNilai >= 0) dosen = cols[iNilai - 1] || '-';
+                            else dosen = cols[cols.length - 2] || '-';
+                            const nilai = iNilai >= 0 ? (cols[iNilai] || '-') : (cols[cols.length - 1] || '-');
+
+                            const clean = (s: string) => String(s || '').replace(/\s+/g, ' ').trim();
+                            const cleanName = clean(name);
+                            const cleanDosen = clean(dosen);
+
+                            if (!cleanName || cleanName === '-' || cleanName.toLowerCase().includes('colspan')) continue;
+
+                            entries.push({ code: clean(code), matkul: cleanName, sks, kelas: clean(kelas), dosen: cleanDosen, nilai: clean(nilai) });
+                        }
+
+                        if (entries.length) {
+                            matkul = entries;
+                            break;
                         }
                     } catch {}
                 }
