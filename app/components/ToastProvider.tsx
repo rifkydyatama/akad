@@ -10,8 +10,13 @@ const ToastContext = createContext<{
 
 export function useToast() {
   const ctx = useContext(ToastContext);
-  if (!ctx) throw new Error('useToast must be used within ToastProvider');
-  return ctx;
+  if (ctx) return ctx;
+  // Fallback: provide a no-op push that forwards to global fallback if present.
+  return {
+    push: (t: Omit<Toast, 'id'>) => {
+      try { (window as any).__siakad_toast?.push?.(t); } catch { /* ignore */ }
+    },
+  };
 }
 
 export default function ToastProvider({ children }: { children: React.ReactNode }) {
