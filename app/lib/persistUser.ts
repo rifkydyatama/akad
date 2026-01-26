@@ -19,7 +19,7 @@ export type SiakadAuthPayload = {
   message?: string;
 };
 
-import { scheduleNotificationsFromLocalStorage, requestNotificationPermission, registerServiceWorker } from './notifications';
+import { scheduleNotificationsFromLocalStorage, requestNotificationPermission, registerServiceWorker, subscribeToPush } from './notifications';
 
 export function persistSiakadUser(data: SiakadAuthPayload) {
   // Don't clear the whole storage; preserve app state like last-sync timestamp.
@@ -145,7 +145,9 @@ export function persistSiakadUser(data: SiakadAuthPayload) {
         await registerServiceWorker();
         const perm = await requestNotificationPermission();
         if (perm === 'granted') {
+          // schedule local notifications and attempt push subscription
           scheduleNotificationsFromLocalStorage();
+          try { await subscribeToPush(localStorage.getItem('user_nim') || null); } catch {}
         }
       } catch (e) {
         console.warn('notification init failed', e);
