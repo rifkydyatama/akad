@@ -1,5 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Inter } from "next/font/google";
+import PageTransitionClient from "./components/PageTransitionClient";
+import ToastProvider from "./components/ToastProvider";
 
 // --- BARIS INI WAJIB ADA ---
 import "./globals.css";
@@ -76,7 +78,12 @@ export default function RootLayout({
           <div className="blob blob-3" />
         </div>
 
-        {children}
+        <PageTransitionClient>
+          {/* ToastProvider must wrap children to allow toasts from any page */}
+          <ToastProvider>
+            {children}
+          </ToastProvider>
+        </PageTransitionClient>
       </body>
     </html>
   );

@@ -3,7 +3,9 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
-import { Calendar, CreditCard, LayoutDashboard, Menu, BarChart3 } from "lucide-react";
+import { Calendar, CreditCard, LayoutDashboard, Menu, BarChart3, Sun, Bell } from "lucide-react";
+import { subscribeToPush } from "../../lib/pushClient";
+import { useToast } from "../../components/ToastProvider";
 
 type Item = {
   href?: string;
@@ -14,18 +16,34 @@ type Item = {
 
 export default function MobileBottomNav({ onMenu }: { onMenu: () => void }) {
   const pathname = usePathname();
-
+  const toast = useToast();
   const items: Item[] = [
     { href: "/dashboard", label: "Beranda", icon: <LayoutDashboard className="h-5 w-5" /> },
     { href: "/dashboard/jadwal", label: "Jadwal", icon: <Calendar className="h-5 w-5" /> },
     { href: "/dashboard/khs", label: "KHS", icon: <BarChart3 className="h-5 w-5" /> },
     { href: "/dashboard/keuangan", label: "Keuangan", icon: <CreditCard className="h-5 w-5" /> },
+    { label: "Tema", icon: <Sun className="h-5 w-5" />, onClick: () => {
+        // toggle theme for mobile
+        try {
+          const root = document.documentElement;
+          const isDark = root.classList.contains('theme-dark');
+          if (isDark) { root.classList.remove('theme-dark'); localStorage.setItem('theme','light'); }
+          else { root.classList.add('theme-dark'); localStorage.setItem('theme','dark'); }
+        } catch (e) { /* ignore */ }
+      } },
+    { label: "Notifikasi", icon: <Bell className="h-5 w-5" />, onClick: async () => {
+        try {
+          const nim = typeof window !== 'undefined' ? localStorage.getItem('user_nim') : null;
+          const sub = await subscribeToPush(nim || null);
+          if (sub) toast.push({ type: 'success', message: 'Notifikasi aktif' }); else toast.push({ type: 'error', message: 'Notifikasi tidak dapat diaktifkan' });
+        } catch (e) { toast.push({ type: 'error', message: 'Gagal mengaktifkan notifikasi' }); }
+      } },
     { label: "Menu", icon: <Menu className="h-5 w-5" />, onClick: onMenu },
   ];
 
   return (
     <nav className="fixed bottom-3 left-3 right-3 z-50 sm:hidden">
-      <div className="glass-card grid grid-cols-5 rounded-3xl p-2">
+      <div className="glass-card rounded-3xl p-2" style={{ display: 'grid', gridTemplateColumns: `repeat(${items.length}, minmax(0, 1fr))` }}>
         {items.map((item) => {
           const active = item.href ? pathname === item.href : false;
           const base =

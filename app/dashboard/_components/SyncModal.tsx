@@ -32,13 +32,13 @@ export default function SyncModal({ open, onClose }: { open: boolean; onClose: (
         onClose();
       } else {
         const msg = data.message || "Sinkronisasi gagal.";
-        alert(msg);
+        try { window.__siakad_toast?.push?.({ type: 'error', message: msg }); } catch { }
         if (res.status === 401) {
           router.push("/");
         }
       }
     } catch {
-      alert("Terjadi kesalahan koneksi ke server.");
+      try { window.__siakad_toast?.push?.({ type: 'error', message: 'Terjadi kesalahan koneksi ke server.' }); } catch { }
     } finally {
       setLoading(false);
     }

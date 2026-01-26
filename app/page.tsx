@@ -50,11 +50,12 @@ export default function LoginPage() {
         // Masuk Dashboard
         router.push('/dashboard');
       } else {
-        alert(data.message || 'Login Gagal. Cek NIM/Password.');
+        // show inline toast
+        try { window.__siakad_toast?.push?.({ type: 'error', message: data.message || 'Login Gagal. Cek NIM/Password.' }); } catch {}
         setStatusMsg("");
       }
     } catch {
-      alert('Terjadi kesalahan koneksi. Pastikan server/internet aktif.');
+      try { window.__siakad_toast?.push?.({ type: 'error', message: 'Terjadi kesalahan koneksi. Pastikan server/internet aktif.' }); } catch {}
       setStatusMsg("");
     } finally {
       setLoading(false);
