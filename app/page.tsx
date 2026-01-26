@@ -1,5 +1,13 @@
 "use client"
 import { useEffect, useState } from 'react';
+
+declare global {
+  interface Window {
+    __siakad_toast?: {
+      push?: (message: { type: string; message: string }) => void;
+    };
+  }
+}
 import { useRouter } from 'next/navigation';
 import { GraduationCap, Lock, User, ArrowRight, Loader2 } from 'lucide-react';
 import { persistSiakadUser } from './lib/persistUser';
