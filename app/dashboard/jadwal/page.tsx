@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Clock, MapPin, Calendar, Edit2, User } from "lucide-react";
-import EditJadwalModal from "@/app/components/EditJadwalModal";
+import EditJadwalModal from "../../components/EditJadwalModal";
 import DashboardShell from "../_components/DashboardShell";
 
 type JadwalItem = {

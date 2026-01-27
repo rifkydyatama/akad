@@ -6,6 +6,7 @@
     "dev": "next dev -p 3000",
     "build": "next build --webpack",
     "start": "next start",
+    "send-test-push": "node ./tools/send_test_push.js",
     "lint": "eslint"
   },
   "dependencies": {

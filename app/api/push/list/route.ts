@@ -1,21 +1,12 @@
 import { NextResponse } from 'next/server';
-import { readFileSync, existsSync } from 'fs';
-import path from 'path';
+import { listSubscriptions } from '../../../lib/pushStore';
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
-    const file = path.join(process.cwd(), 'tmp', 'push-subscriptions.json');
-    if (!existsSync(file)) return NextResponse.json({ success: true, total: 0, byNim: {} });
-    const raw = readFileSync(file, 'utf8') || '{}';
-    const all = JSON.parse(raw) as Record<string, Array<Record<string, unknown>>>;
-    const byNim: Record<string, number> = {};
-    let total = 0;
-    for (const k of Object.keys(all)) {
-      const count = (all[k] || []).length;
-      byNim[k] = count;
-      total += count;
-    }
-    return NextResponse.json({ success: true, total, byNim });
+    const url = new URL(request.url);
+    const nim = url.searchParams.get('nim');
+    const subs = listSubscriptions(nim || undefined);
+    return NextResponse.json({ success: true, count: subs.length, subscriptions: subs });
   } catch (e: any) {
     return NextResponse.json({ success: false, message: e?.message || String(e) }, { status: 500 });
   }
