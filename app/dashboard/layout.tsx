@@ -23,6 +23,7 @@ import MobileBottomNav from "./_components/MobileBottomNav";
 import { persistSiakadUser } from "../lib/persistUser";
 import NotificationsToggle from "../components/NotificationsToggle";
 import ThemeToggle from "../components/ThemeToggle";
+import EnablePushButton from "../components/EnablePushButton";
 
 type NavItem = {
   href: string;
@@ -200,6 +201,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               </div>
               <div className="hidden sm:block">
                 <NotificationsToggle nim={user?.nim || null} />
+              </div>
+              <div className="hidden sm:block">
+                <EnablePushButton />
               </div>
             </div>
             <button

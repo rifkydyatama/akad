@@ -2,7 +2,6 @@ import type { Metadata, Viewport } from "next";
 import { Inter } from "next/font/google";
 import PageTransitionClient from "./components/PageTransitionClient";
 import ToastProvider from "./components/ToastProvider";
-import EnablePushButton from './components/EnablePushButton';
 
 // --- BARIS INI WAJIB ADA ---
 import "./globals.css";
@@ -81,7 +80,6 @@ export default function RootLayout({
 
         {/* App UI */}
         {children}
-        <EnablePushButton />
       </body>
     </html>
   );

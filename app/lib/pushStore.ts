@@ -47,11 +47,13 @@ function ensureAllowed() {
 export function saveSubscription(nim: string | null, subscription: any) {
   ensureAllowed();
   const key = String(nim || '__all__');
+  console.log('[pushStore] saving subscription for key', key, 'endpoint', subscription?.endpoint);
   const all = readAll();
   const arr = all[key] || [];
   arr.push({ nim, subscription, createdAt: Date.now() });
   all[key] = arr;
   writeAll(all);
+  console.log('[pushStore] saved, total subscriptions', Object.values(all).flat().length);
 }
 
 export function listSubscriptions(nim?: string | null) {

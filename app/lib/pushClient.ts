@@ -9,20 +9,34 @@ export function urlBase64ToUint8Array(base64String: string) {
 
 export async function subscribeToPush(nim: string | null) {
   try {
-    if (!('serviceWorker' in navigator) || !('PushManager' in window)) return null;
+    console.log('subscribeToPush: starting');
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+      console.warn('subscribeToPush: SW or PushManager not supported');
+      return null;
+    }
+    console.log('subscribeToPush: registering SW');
     const registration = await navigator.serviceWorker.register('/sw.js');
+    console.log('subscribeToPush: waiting for SW ready');
     await navigator.serviceWorker.ready;
+    console.log('subscribeToPush: requesting permission');
     const permission = await Notification.requestPermission();
-    if (permission !== 'granted') return null;
+    if (permission !== 'granted') {
+      console.warn('subscribeToPush: permission not granted', permission);
+      return null;
+    }
+    console.log('subscribeToPush: fetching VAPID');
     // `/api/push/vapid` returns JSON { publicKey }
     const vapidJson = await fetch('/api/push/vapid').then(r => r.json().catch(() => null));
     const vapid = (vapidJson && (vapidJson.publicKey || vapidJson.publicKey)) || (typeof vapidJson === 'string' ? vapidJson : null);
     if (!vapid) {
-      console.warn('VAPID public key missing from /api/push/vapid');
+      console.warn('subscribeToPush: VAPID public key missing', vapidJson);
       return null;
     }
+    console.log('subscribeToPush: subscribing to push', vapid);
     const sub = await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(vapid) });
+    console.log('subscribeToPush: posting to /api/push/subscribe', sub.endpoint);
     await fetch('/api/push/subscribe', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ nim, subscription: sub }) });
+    console.log('subscribeToPush: success');
     return sub;
   } catch (err) {
     console.warn('subscribeToPush error', err);

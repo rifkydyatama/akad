@@ -23,22 +23,20 @@ export default function EnablePushButton() {
   }
 
   return (
-    <div className="fixed right-4 top-4 sm:top-auto sm:bottom-4 z-50" style={{ paddingBottom: 'env(safe-area-inset-bottom, 16px)' }}>
-      <button
-        onClick={handleEnable}
-        disabled={status === 'requesting' || status === 'granted'}
-        className={
-          `px-4 py-2 bg-indigo-600 text-white rounded shadow-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed`
-        }
-        aria-pressed={status === 'granted'}
-        aria-label="Enable notifications"
-      >
-        {status === 'idle' && 'Enable Notifications'}
-        {status === 'requesting' && 'Requesting...'}
-        {status === 'granted' && 'Notifications Enabled'}
-        {status === 'denied' && 'Permission Denied'}
-        {status === 'error' && 'Error'}
-      </button>
-    </div>
+    <button
+      onClick={handleEnable}
+      disabled={status === 'requesting' || status === 'granted'}
+      className={
+        `px-3 py-2 bg-indigo-600 text-white rounded shadow hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed text-sm font-semibold`
+      }
+      aria-pressed={status === 'granted'}
+      aria-label="Enable notifications"
+    >
+      {status === 'idle' && 'Enable Push'}
+      {status === 'requesting' && 'Requesting...'}
+      {status === 'granted' && 'Push Enabled'}
+      {status === 'denied' && 'Denied'}
+      {status === 'error' && 'Error'}
+    </button>
   );
 }
