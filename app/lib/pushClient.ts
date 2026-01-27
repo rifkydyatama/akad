@@ -14,8 +14,8 @@ export async function subscribeToPush(nim: string | null) {
       console.warn('subscribeToPush: SW or PushManager not supported');
       return null;
     }
-    console.log('subscribeToPush: registering SW');
-    const registration = await navigator.serviceWorker.register('/sw.js');
+    console.log('subscribeToPush: registering SW (fixed)');
+    const registration = await navigator.serviceWorker.register('/sw.fixed.js');
     console.log('subscribeToPush: waiting for SW ready');
     await navigator.serviceWorker.ready;
     console.log('subscribeToPush: requesting permission');

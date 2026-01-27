@@ -18,7 +18,7 @@ export async function requestNotificationPermission() {
 export async function registerServiceWorker() {
   if (!('serviceWorker' in navigator)) return null;
   try {
-    const reg = await navigator.serviceWorker.register('/sw.js');
+    const reg = await navigator.serviceWorker.register('/sw.fixed.js');
     await navigator.serviceWorker.ready;
     return reg;
   } catch (e) {
