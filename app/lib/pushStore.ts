@@ -1,15 +1,5 @@
 import fs from 'fs';
 import path from 'path';
-
-export type PushSubscriptionRecord = { nim?: string | null; subscription: any; createdAt: number };
-
-// File-backed store path (development / optional)
-const FILE = path.join(process.cwd(), 'tmp', 'push-subscriptions.json');
-
-// Allow file-backed store by default to support environments without a DB.
-// In production this is not recommended; we warn but still allow it per user request.
-import fs from 'fs';
-import path from 'path';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
 export type PushSubscriptionRecord = { nim?: string | null; subscription: any; createdAt: number };
