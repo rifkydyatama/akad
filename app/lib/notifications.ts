@@ -47,7 +47,7 @@ export async function subscribeToPush(nim?: string | null) {
     const publicKey = body?.publicKey;
     if (!publicKey) return null;
     const sub = await reg.pushManager.subscribe({
-      userVisibleOnly: true,
+      userVisibleOnly: true, 
       applicationServerKey: urlBase64ToUint8Array(publicKey),
     });
     // send to server

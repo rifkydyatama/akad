@@ -14,7 +14,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ success: false, message: 'missing subscription' }, { status: 400 });
     }
     console.log('[push/subscribe] saving subscription');
-    saveSubscription(nim, subscription);
+    await saveSubscription(nim, subscription);
     console.log('[push/subscribe] saved successfully');
     return NextResponse.json({ success: true });
   } catch (e: any) {

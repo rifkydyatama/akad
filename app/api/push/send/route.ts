@@ -22,7 +22,7 @@ export async function POST(request: Request) {
     const webpush = await import('web-push');
     webpush.setVapidDetails(mail, publicKey, privateKey);
 
-    const subs = listSubscriptions(nim || null);
+    const subs = await listSubscriptions(nim || null);
     console.log('[push/send] found subscriptions', subs.length);
     const results: any[] = [];
 
@@ -36,7 +36,7 @@ export async function POST(request: Request) {
         console.log('[push/send] error sending to', rec.subscription.endpoint, err);
         // remove invalid
         results.push({ endpoint: rec.subscription.endpoint, ok: false, error: err?.body || err?.message || String(err) });
-        if (rec.subscription && rec.subscription.endpoint) removeSubscriptionByEndpoint(rec.subscription.endpoint);
+        if (rec.subscription && rec.subscription.endpoint) await removeSubscriptionByEndpoint(rec.subscription.endpoint);
       }
     }
 
@@ -44,4 +44,6 @@ export async function POST(request: Request) {
     return NextResponse.json({ success: true, sent: results });
   } catch (e: any) {
     console.log('[push/send] error', e);
+    return NextResponse.json({ success: false, message: String(e?.message || e) }, { status: 500 });
+  }
 }
